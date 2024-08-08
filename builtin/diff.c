@@ -7,10 +7,15 @@
 #include "builtin.h"
 #include "config.h"
 #include "ewah/ewok.h"
+#include "hash.h"
+#include "hex.h"
 #include "lockfile.h"
 #include "color.h"
 #include "commit.h"
 #include "gettext.h"
+#include "object-name.h"
+#include "object.h"
+#include "string-list.h"
 #include "tag.h"
 #include "diff.h"
 #include "diff-merges.h"
@@ -293,6 +298,37 @@ static void builtin_diff_files(struct rev_info *revs, int argc, const char **arg
 	run_diff_files(revs, options);
 }
 
+static void batch_diff_blobs(char *line, struct diff_options *opts) {
+	struct string_list revs = STRING_LIST_INIT_NODUP;
+	struct object_array blobs = OBJECT_ARRAY_INIT;
+	struct string_list_item *item;
+	struct object_context oc;
+	struct object_id oid;
+
+	if (string_list_split_in_place(&revs, line, " ", -1) != 2) {
+		die(_("did not receive two blobs"));
+	}
+
+	for_each_string_list_item(item, &revs) {
+		struct object *obj;
+
+		if (get_oid_with_context(the_repository, item->string, GET_OID_BLOB | GET_OID_RECORD_PATH, &oid, &oc))
+			die(_("invalid object '%s' given."), item->string);
+
+		obj = parse_object_or_die(&oid, item->string);
+		if (obj->type != OBJ_BLOB)
+			die(_("object '%s' is not a blob."), item->string);
+
+		add_object_array_with_path(obj, item->string, &blobs, oc.mode, oc.path);
+	}
+
+	diff_blobs(&blobs.objects[0], &blobs.objects[1], opts);
+
+	string_list_clear(&revs, 1);
+	object_array_clear(&blobs);
+	object_context_release(&oc);
+}
+
 struct symdiff {
 	struct bitmap *skip;
 	int warn;
@@ -414,6 +450,7 @@ int cmd_diff(int argc,
 	int nongit = 0, no_index = 0;
 	int result;
 	struct symdiff sdiff;
+	int batch_blobs = 0;
 
 	/*
 	 * We could get N tree-ish in the rev.pending_objects list.
@@ -447,14 +484,16 @@ int cmd_diff(int argc,
 	 * Other cases are errors.
 	 */
 
-	/* Were we asked to do --no-index explicitly? */
 	for (i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--")) {
 			i++;
 			break;
 		}
+		/* Were we asked to do --no-index explicitly? */
 		if (!strcmp(argv[i], "--no-index"))
 			no_index = DIFF_NO_INDEX_EXPLICIT;
+		if (!strcmp(argv[i], "--batch-blobs"))
+			batch_blobs = 1;
 		if (argv[i][0] != '-')
 			break;
 	}
@@ -495,6 +534,10 @@ int cmd_diff(int argc,
 
 	repo_init_revisions(the_repository, &rev, prefix);
 
+	/* Manually handle stdin when a batch mode is selected. */
+	if (batch_blobs)
+		rev.disable_stdin = 1;
+
 	/* Set up defaults that will apply to both no-index and regular diffs. */
 	init_diffstat_widths(&rev.diffopt);
 	rev.diffopt.flags.allow_external = 1;
@@ -531,6 +574,22 @@ int cmd_diff(int argc,
 	rev.diffopt.rotate_to_strict = 1;
 
 	setup_diff_pager(&rev.diffopt);
+
+	if (batch_blobs) {
+		struct strbuf sb;
+
+		rev.diffopt.rotate_to_strict = 0;
+		rev.diffopt.no_free = 1;
+
+		strbuf_init(&sb, 1000);
+		while (strbuf_getline(&sb, stdin) != EOF) {
+			batch_diff_blobs(sb.buf, &rev.diffopt);
+		}
+
+		strbuf_release(&sb);
+		diff_free(&rev.diffopt);
+		goto done;
+	}
 
 	/*
 	 * Do we have --cached and not have a pending object, then
@@ -629,6 +688,8 @@ int cmd_diff(int argc,
 		builtin_diff_combined(&rev, argc, argv,
 				      ent.objects, ent.nr,
 				      first_non_parent);
+
+done:
 	result = diff_result_code(&rev);
 	if (1 < rev.diffopt.skip_stat_unmatch)
 		refresh_index_quietly();
