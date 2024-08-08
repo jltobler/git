@@ -109,28 +109,35 @@ static void builtin_diff_b_f(struct rev_info *revs,
 	diff_flush(&revs->diffopt);
 }
 
+static void diff_blobs(struct object_array_entry *old_blob,
+		       struct object_array_entry *new_blob,
+		       struct diff_options *opts)
+{
+	const unsigned mode = canon_mode(S_IFREG | 0644);
+
+	if (old_blob->mode == S_IFINVALID)
+		old_blob->mode = mode;
+
+	if (new_blob->mode == S_IFINVALID)
+		new_blob->mode = mode;
+
+	stuff_change(opts,
+		     old_blob->mode, new_blob->mode,
+		     &old_blob->item->oid, &new_blob->item->oid,
+		     1, 1,
+		     blob_path(old_blob), blob_path(new_blob));
+	diffcore_std(opts);
+	diff_flush(opts);
+}
+
 static void builtin_diff_blobs(struct rev_info *revs,
 			       int argc, const char **argv UNUSED,
 			       struct object_array_entry **blob)
 {
-	const unsigned mode = canon_mode(S_IFREG | 0644);
-
 	if (argc > 1)
 		usage(builtin_diff_usage);
 
-	if (blob[0]->mode == S_IFINVALID)
-		blob[0]->mode = mode;
-
-	if (blob[1]->mode == S_IFINVALID)
-		blob[1]->mode = mode;
-
-	stuff_change(&revs->diffopt,
-		     blob[0]->mode, blob[1]->mode,
-		     &blob[0]->item->oid, &blob[1]->item->oid,
-		     1, 1,
-		     blob_path(blob[0]), blob_path(blob[1]));
-	diffcore_std(&revs->diffopt);
-	diff_flush(&revs->diffopt);
+	diff_blobs(blob[0], blob[1], &revs->diffopt);
 }
 
 static void builtin_diff_index(struct rev_info *revs,
