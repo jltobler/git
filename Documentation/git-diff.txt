@@ -14,6 +14,7 @@ SYNOPSIS
 'git diff' [<options>] [--merge-base] <commit> [<commit>...] <commit> [--] [<path>...]
 'git diff' [<options>] <commit>...<commit> [--] [<path>...]
 'git diff' [<options>] <blob> <blob>
+'git diff' [<options>] --batch-blobs
 'git diff' [<options>] --no-index [--] <path> <path>
 
 DESCRIPTION
@@ -119,6 +120,13 @@ and the range notations (`<commit>..<commit>` and
 
 	This form is to view the differences between the raw
 	contents of two blob objects.
+
+'git diff' [<options>] --batch-blobs::
+
+	This form is to view the differences between the raw
+	contents of batches of blob pairs provided on stdin.
+	Each input line must provide two revisions separated
+	by a space that each resolve to a blob object.
 
 OPTIONS
 -------
