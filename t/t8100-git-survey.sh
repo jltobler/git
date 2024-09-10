@@ -50,6 +50,14 @@ test_expect_success 'git survey (default)' '
 	    Commits |    10
 	      Trees |    10
 	      Blobs |    10
+
+	TOTAL OBJECT SIZES BY TYPE
+	===============================================
+	Object Type | Count | Disk Size | Inflated Size
+	------------+-------+-----------+--------------
+	    Commits |    10 |      1523 |          2153
+	      Trees |    10 |       495 |          1706
+	      Blobs |    10 |       191 |           101
 	EOF
 
 	test_cmp expect out
