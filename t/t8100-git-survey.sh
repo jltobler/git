@@ -60,7 +60,17 @@ test_expect_success 'git survey (default)' '
 	      Blobs |    10 |       191 |           101
 	EOF
 
-	test_cmp expect out
+	lines=$(wc -l <expect) &&
+	head -n $lines out >out-trimmed &&
+	test_cmp expect out-trimmed &&
+
+	for type in "DIRECTORIES" "FILES"
+	do
+		for metric in "COUNT" "DISK SIZE" "INFLATED SIZE"
+		do
+			grep "TOP $type BY $metric" out || return 1
+		done || return 1
+	done
 '
 
 test_done
