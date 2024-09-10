@@ -77,6 +77,102 @@ struct survey_report_object_size_summary {
 	size_t num_missing;
 };
 
+typedef int (*survey_top_size_cmp)(struct survey_report_object_size_summary *s1,
+				   struct survey_report_object_size_summary *s2);
+
+MAYBE_UNUSED
+static int cmp_by_nr(struct survey_report_object_size_summary *s1,
+		     struct survey_report_object_size_summary *s2)
+{
+	if (s1->nr < s2->nr)
+		return -1;
+	if (s1->nr > s2->nr)
+		return 1;
+	return 0;
+}
+
+MAYBE_UNUSED
+static int cmp_by_disk_size(struct survey_report_object_size_summary *s1,
+			    struct survey_report_object_size_summary *s2)
+{
+	if (s1->disk_size < s2->disk_size)
+		return -1;
+	if (s1->disk_size > s2->disk_size)
+		return 1;
+	return 0;
+}
+
+MAYBE_UNUSED
+static int cmp_by_inflated_size(struct survey_report_object_size_summary *s1,
+				struct survey_report_object_size_summary *s2)
+{
+	if (s1->inflated_size < s2->inflated_size)
+		return -1;
+	if (s1->inflated_size > s2->inflated_size)
+		return 1;
+	return 0;
+}
+
+/**
+ * Store a list of "top" categories by some sorting function. When
+ * inserting a new category, reorder the list and free the one that
+ * got ejected (if any).
+ */
+struct survey_report_top_sizes {
+	const char *name;
+	survey_top_size_cmp cmp_fn;
+	struct survey_report_object_size_summary *data;
+	size_t nr;
+	size_t alloc;
+};
+
+MAYBE_UNUSED
+static void init_top_sizes(struct survey_report_top_sizes *top,
+			   size_t limit, const char *name,
+			   survey_top_size_cmp cmp)
+{
+	top->name = name;
+	top->alloc = limit;
+	top->nr = 0;
+	CALLOC_ARRAY(top->data, limit);
+	top->cmp_fn = cmp;
+}
+
+MAYBE_UNUSED
+static void clear_top_sizes(struct survey_report_top_sizes *top)
+{
+	for (size_t i = 0; i < top->nr; i++)
+		free(top->data[i].label);
+	free(top->data);
+}
+
+MAYBE_UNUSED
+static void maybe_insert_into_top_size(struct survey_report_top_sizes *top,
+				       struct survey_report_object_size_summary *summary)
+{
+	size_t pos = top->nr;
+
+	/* Compare against list from the bottom. */
+	while (pos > 0 && top->cmp_fn(&top->data[pos - 1], summary) < 0)
+		pos--;
+
+	/* Not big enough! */
+	if (pos >= top->alloc)
+		return;
+
+	/* We need to shift the data. */
+	if (top->nr == top->alloc)
+		free(top->data[top->nr - 1].label);
+	else
+		top->nr++;
+
+	for (size_t i = top->nr - 1; i > pos; i--)
+		memcpy(&top->data[i], &top->data[i - 1], sizeof(*top->data));
+
+	memcpy(&top->data[pos], summary, sizeof(*summary));
+	top->data[pos].label = xstrdup(summary->label);
+}
+
 /**
  * This struct contains all of the information that needs to be printed
  * at the end of the exploration of the repository and its references.
