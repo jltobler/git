@@ -451,7 +451,7 @@ int cmd_diff(int argc,
 	int nongit = 0, no_index = 0;
 	int result;
 	struct symdiff sdiff;
-	int batch_blobs = 0;
+	int batch = 0;
 
 	/*
 	 * We could get N tree-ish in the rev.pending_objects list.
@@ -493,8 +493,8 @@ int cmd_diff(int argc,
 		/* Were we asked to do --no-index explicitly? */
 		if (!strcmp(argv[i], "--no-index"))
 			no_index = DIFF_NO_INDEX_EXPLICIT;
-		if (!strcmp(argv[i], "--batch-blobs"))
-			batch_blobs = 1;
+		if (!strcmp(argv[i], "--batch"))
+			batch = 1;
 		if (argv[i][0] != '-')
 			break;
 	}
@@ -536,7 +536,7 @@ int cmd_diff(int argc,
 	repo_init_revisions(the_repository, &rev, prefix);
 
 	/* Manually handle stdin when a batch mode is selected. */
-	if (batch_blobs)
+	if (batch)
 		rev.disable_stdin = 1;
 
 	/* Set up defaults that will apply to both no-index and regular diffs. */
@@ -576,7 +576,7 @@ int cmd_diff(int argc,
 
 	setup_diff_pager(&rev.diffopt);
 
-	if (batch_blobs) {
+	if (batch) {
 		struct strbuf sb;
 
 		rev.diffopt.rotate_to_strict = 0;
@@ -690,13 +690,13 @@ int cmd_diff(int argc,
 				      ent.objects, ent.nr,
 				      first_non_parent);
 
+	symdiff_release(&sdiff);
 done:
 	result = diff_result_code(&rev);
 	if (1 < rev.diffopt.skip_stat_unmatch)
 		refresh_index_quietly();
 	release_revisions(&rev);
 	object_array_clear(&ent);
-	symdiff_release(&sdiff);
 	UNLEAK(blob);
 	return result;
 }
