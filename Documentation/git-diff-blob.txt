@@ -1,0 +1,29 @@
+git-diff-blob(1)
+================
+
+NAME
+----
+git-diff-blob - Compares the content and mode of two specified blobs
+
+
+SYNOPSIS
+--------
+[verse]
+'git diff-blob' <blob> <blob>
+
+DESCRIPTION
+-----------
+Compare the content and mode of two specified blobs.
+
+OPTIONS
+-------
+<blob>::
+	The id of a blob object or path-scoped revision that resolves to a blob.
+
+include::pretty-formats.txt[]
+
+include::diff-format.txt[]
+
+GIT
+---
+Part of the linkgit:git[1] suite

@@ -93,6 +93,7 @@ git-daemon                              synchingrepositories
 git-describe                            mainporcelain
 git-diagnose                            ancillaryinterrogators
 git-diff                                mainporcelain           info
+git-diff-blob                           plumbinginterrogators
 git-diff-files                          plumbinginterrogators
 git-diff-index                          plumbinginterrogators
 git-diff-tree                           plumbinginterrogators

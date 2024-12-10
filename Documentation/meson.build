@@ -39,6 +39,7 @@ manpages = {
   'git-daemon.txt' : 1,
   'git-describe.txt' : 1,
   'git-diagnose.txt' : 1,
+  'git-diff-blob.txt' : 1,
   'git-diff-files.txt' : 1,
   'git-diff-index.txt' : 1,
   'git-difftool.txt' : 1,

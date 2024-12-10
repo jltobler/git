@@ -52,6 +52,7 @@
 /git-daemon
 /git-diagnose
 /git-diff
+/git-diff-blob
 /git-diff-files
 /git-diff-index
 /git-diff-tree

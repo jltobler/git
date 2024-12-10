@@ -503,6 +503,7 @@ builtin_sources = [
   'builtin/credential.c',
   'builtin/describe.c',
   'builtin/diagnose.c',
+  'builtin/diff-blob.c',
   'builtin/diff-files.c',
   'builtin/diff-index.c',
   'builtin/diff-tree.c',
