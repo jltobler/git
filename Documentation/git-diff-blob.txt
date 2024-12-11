@@ -10,6 +10,7 @@ SYNOPSIS
 --------
 [verse]
 'git diff-blob' <blob> <blob>
+'git diff-blob' --stdin
 
 DESCRIPTION
 -----------
@@ -19,6 +20,11 @@ OPTIONS
 -------
 <blob>::
 	The id of a blob object or path-scoped revision that resolves to a blob.
+
+--stdin::
+	When `--stdin` is specified, the command does not take <blob> arguments
+	from the command line.  Instead, it reads lines containing two <blob>
+	from its standard input.  (Use a single space as separator.)
 
 include::pretty-formats.txt[]
 

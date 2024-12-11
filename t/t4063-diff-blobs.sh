@@ -98,4 +98,18 @@ for cmd in $commands; do
 	'
 done
 
+test_expect_success 'diff-blob --stdin with blob ID' '
+	echo $sha1_one $sha1_two | git diff-blob --full-index --stdin >diff &&
+	check_index $sha1_one $sha1_two &&
+	check_paths $sha1_one $sha1_two &&
+	! grep mode diff
+'
+
+test_expect_success 'diff-blob --stdin with revision' '
+	echo HEAD:one HEAD:two | git diff-blob --full-index --stdin >diff &&
+	check_index $sha1_one $sha1_two &&
+	check_paths one two &&
+	check_mode 100644 100755
+'
+
 test_done

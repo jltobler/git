@@ -4,9 +4,12 @@
 #include "diffcore.h"
 #include "gettext.h"
 #include "hash.h"
+#include "object-name.h"
 #include "object.h"
 #include "parse-options.h"
 #include "revision.h"
+#include "strbuf.h"
+#include "string-list.h"
 
 static void diff_blobs(struct object_array_entry *old_blob,
 		       struct object_array_entry *new_blob,
@@ -59,18 +62,66 @@ static void diff_blobs(struct object_array_entry *old_blob,
 	diff_flush(opts);
 }
 
+static void parse_blob_stdin(struct object_array *blob_pair,
+			     struct repository *repo, const char *name)
+{
+	int flags = GET_OID_BLOB | GET_OID_RECORD_PATH;
+	struct object_context oc;
+	struct object_id oid;
+	struct object *obj;
+
+	if (get_oid_with_context(repo, name, flags, &oid, &oc))
+		die("invalid object %s given", name);
+
+	obj = parse_object_or_die(&oid, name);
+	if (obj->type != OBJ_BLOB)
+		die("object %s is not a blob", name);
+
+	add_object_array_with_path(obj, name, blob_pair, oc.mode, oc.path);
+	object_context_release(&oc);
+}
+
+static void diff_blob_stdin(struct repository *repo, struct diff_options *opts)
+{
+	struct strbuf sb = STRBUF_INIT;
+	struct string_list_item *item;
+
+	while (strbuf_getline(&sb, stdin) != EOF) {
+		struct object_array blob_pair = OBJECT_ARRAY_INIT;
+		struct string_list list = STRING_LIST_INIT_NODUP;
+
+		if (string_list_split_in_place(&list, sb.buf, " ", -1) != 2)
+			die("two blobs not provided");
+
+		for_each_string_list_item(item, &list) {
+			parse_blob_stdin(&blob_pair, repo, item->string);
+		}
+
+		diff_blobs(&blob_pair.objects[0], &blob_pair.objects[1], opts);
+
+		string_list_clear(&list, 1);
+		object_array_clear(&blob_pair);
+	}
+
+	strbuf_release(&sb);
+}
+
 int cmd_diff_blob(int argc, const char **argv, const char *prefix,
 		  struct repository *repo)
 {
 	struct object_array_entry *old_blob, *new_blob;
 	struct rev_info revs;
+	int read_stdin = 0;
 	int ret;
 
 	const char * const usage[] = {
 		N_("git diff-blob <blob> <blob>"),
+		N_("git diff-blob --stdin"),
 		NULL
 	};
 	struct option options[] = {
+		OPT_BOOL(0, "stdin", &read_stdin,
+			N_("read blob pairs from stdin")),
 		OPT_END()
 	};
 
@@ -93,7 +144,20 @@ int cmd_diff_blob(int argc, const char **argv, const char *prefix,
 		revs.diffopt.output_format = DIFF_FORMAT_PATCH;
 
 	switch (revs.pending.nr) {
+	case 0:
+		if (!read_stdin)
+			usage_with_options(usage, options);
+
+		revs.diffopt.no_free = 1;
+		diff_blob_stdin(repo, &revs.diffopt);
+		revs.diffopt.no_free = 0;
+		diff_free(&revs.diffopt);
+
+		break;
 	case 2:
+		if (read_stdin)
+			usage_with_options(usage, options);
+
 		old_blob = &revs.pending.objects[0];
 		new_blob = &revs.pending.objects[1];
 
