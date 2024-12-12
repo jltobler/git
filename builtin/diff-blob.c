@@ -81,23 +81,39 @@ static void parse_blob_stdin(struct object_array *blob_pair,
 	object_context_release(&oc);
 }
 
-static void diff_blob_stdin(struct repository *repo, struct diff_options *opts)
+static void diff_blob_stdin(struct repository *repo, struct diff_options *opts,
+			    int null_term)
 {
 	struct strbuf sb = STRBUF_INIT;
 	struct string_list_item *item;
 
-	while (strbuf_getline(&sb, stdin) != EOF) {
+	while (1) {
 		struct object_array blob_pair = OBJECT_ARRAY_INIT;
 		struct string_list list = STRING_LIST_INIT_NODUP;
 
-		if (string_list_split_in_place(&list, sb.buf, " ", -1) != 2)
-			die("two blobs not provided");
+		if (null_term) {
+			if (strbuf_getline_nul(&sb, stdin) == EOF)
+				break;
+			parse_blob_stdin(&blob_pair, repo, sb.buf);
 
-		for_each_string_list_item(item, &list) {
-			parse_blob_stdin(&blob_pair, repo, item->string);
+			if (strbuf_getline_nul(&sb, stdin) == EOF)
+				break;
+			parse_blob_stdin(&blob_pair, repo, sb.buf);
+		} else {
+			if (strbuf_getline(&sb, stdin) == EOF)
+				break;
+
+			if (string_list_split_in_place(&list, sb.buf, " ", -1) != 2)
+				die("two blobs not provided");
+
+			for_each_string_list_item(item, &list) {
+				parse_blob_stdin(&blob_pair, repo, item->string);
+			}
 		}
 
 		diff_blobs(&blob_pair.objects[0], &blob_pair.objects[1], opts);
+		if (null_term)
+			printf("%c", '\0');
 
 		string_list_clear(&list, 1);
 		object_array_clear(&blob_pair);
@@ -112,16 +128,19 @@ int cmd_diff_blob(int argc, const char **argv, const char *prefix,
 	struct object_array_entry *old_blob, *new_blob;
 	struct rev_info revs;
 	int read_stdin = 0;
+	int null_term = 0;
 	int ret;
 
 	const char * const usage[] = {
 		N_("git diff-blob <blob> <blob>"),
-		N_("git diff-blob --stdin"),
+		N_("git diff-blob --stdin [-z]"),
 		NULL
 	};
 	struct option options[] = {
 		OPT_BOOL(0, "stdin", &read_stdin,
 			N_("read blob pairs from stdin")),
+		OPT_BOOL('z', NULL, &null_term,
+			N_("inputed blobs and outputted diffs terminated with NUL")),
 		OPT_END()
 	};
 
@@ -149,13 +168,13 @@ int cmd_diff_blob(int argc, const char **argv, const char *prefix,
 			usage_with_options(usage, options);
 
 		revs.diffopt.no_free = 1;
-		diff_blob_stdin(repo, &revs.diffopt);
+		diff_blob_stdin(repo, &revs.diffopt, null_term);
 		revs.diffopt.no_free = 0;
 		diff_free(&revs.diffopt);
 
 		break;
 	case 2:
-		if (read_stdin)
+		if (read_stdin || null_term)
 			usage_with_options(usage, options);
 
 		old_blob = &revs.pending.objects[0];

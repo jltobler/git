@@ -10,7 +10,7 @@ SYNOPSIS
 --------
 [verse]
 'git diff-blob' <blob> <blob>
-'git diff-blob' --stdin
+'git diff-blob' --stdin [-z]
 
 DESCRIPTION
 -----------
@@ -25,6 +25,10 @@ OPTIONS
 	When `--stdin` is specified, the command does not take <blob> arguments
 	from the command line.  Instead, it reads lines containing two <blob>
 	from its standard input.  (Use a single space as separator.)
+
+-z::
+	When `--stdin` has been given, use NUL characters to separate blob
+	inputs and diff outputs.
 
 include::pretty-formats.txt[]
 
