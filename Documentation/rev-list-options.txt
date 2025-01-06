@@ -1028,6 +1028,18 @@ If some tips passed to the traversal are missing, they will be
 considered as missing too, and the traversal will ignore them. In case
 we cannot get their Object ID though, an error will be raised.
 
+--missing-info::
+	Only useful with `--missing=print`; prints any additional information
+	about the missing object inferred from its containing object. The
+	information is all printed on the same line with the missing object ID
+	in the form: `?<oid> [<token>=<value>]...`. Additional attributes are
+	each separated by a SP. Any value containing a SP or special character
+	is enclosed in double-quotes in the C style as needed. Each
+	`<token>=<value>` may be one of the following:
++
+The `path=<path>` shows the path of the missing object inferred from a
+containing object.
+
 --exclude-promisor-objects::
 	(For internal use only.)  Prefilter object traversal at
 	promisor boundary.  This is used with partial clone.  This is
