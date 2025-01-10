@@ -1039,6 +1039,9 @@ we cannot get their Object ID though, an error will be raised.
 +
 The `path=<path>` shows the path of the missing object inferred from a
 containing object.
++
+The `type=<type>` shows the type of the missing object inferred from a
+containing object.
 
 --exclude-promisor-objects::
 	(For internal use only.)  Prefilter object traversal at

@@ -79,6 +79,7 @@ static int arg_print_omitted; /* print objects omitted by filter */
 struct missing_objects_map_entry {
 	struct oidmap_entry entry;
 	const char *path;
+	unsigned type;
 };
 static struct oidmap missing_objects;
 enum missing_action {
@@ -108,7 +109,8 @@ static off_t get_object_disk_usage(struct object *obj)
 	return size;
 }
 
-static void add_missing_object_entry(struct object_id *oid, const char *path)
+static void add_missing_object_entry(struct object_id *oid, const char *path,
+				     unsigned type)
 {
 	struct missing_objects_map_entry *entry;
 
@@ -117,6 +119,7 @@ static void add_missing_object_entry(struct object_id *oid, const char *path)
 
 	CALLOC_ARRAY(entry, 1);
 	entry->entry.oid = *oid;
+	entry->type = type;
 	if (path)
 		entry->path = xstrdup(path);
 	oidmap_put(&missing_objects, entry);
@@ -143,6 +146,8 @@ static void print_missing_object(struct missing_objects_map_entry *entry,
 		else
 			strbuf_addstr(&sb, entry->path);
 	}
+	if (entry->type)
+		strbuf_addf(&sb, " type=%s", type_name(entry->type));
 
 	printf("?%s%s\n", oid_to_hex(&entry->entry.oid), sb.buf);
 	strbuf_release(&sb);
@@ -166,7 +171,7 @@ static inline void finish_object__ma(struct object *obj, const char *name)
 		return;
 
 	case MA_PRINT:
-		add_missing_object_entry(&obj->oid, name);
+		add_missing_object_entry(&obj->oid, name, obj->type);
 		return;
 
 	case MA_ALLOW_PROMISOR:
@@ -846,7 +851,7 @@ int cmd_rev_list(int argc,
 
 		/* Add missing tips */
 		while ((oid = oidset_iter_next(&iter)))
-			add_missing_object_entry(oid, NULL);
+			add_missing_object_entry(oid, NULL, 0);
 
 		oidset_clear(&revs.missing_commits);
 	}
