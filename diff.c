@@ -7157,16 +7157,19 @@ void compute_diffstat(struct diff_options *options,
 	options->found_changes = !!diffstat->nr;
 }
 
-void diff_addremove(struct diff_options *options,
-		    int addremove, unsigned mode,
-		    const struct object_id *oid,
-		    int oid_valid,
-		    const char *concatpath, unsigned dirty_submodule)
+struct diff_filepair *diff_queue_addremove(struct diff_queue_struct *queue,
+					   struct diff_options *options,
+					   int addremove, unsigned mode,
+					   const struct object_id *oid,
+					   int oid_valid,
+					   const char *concatpath,
+					   unsigned dirty_submodule)
 {
 	struct diff_filespec *one, *two;
+	struct diff_filepair *pair;
 
 	if (S_ISGITLINK(mode) && is_submodule_ignored(concatpath, options))
-		return;
+		return NULL;
 
 	/* This may look odd, but it is a preparation for
 	 * feeding "there are unchanged files which should
@@ -7186,7 +7189,7 @@ void diff_addremove(struct diff_options *options,
 
 	if (options->prefix &&
 	    strncmp(concatpath, options->prefix, options->prefix_length))
-		return;
+		return NULL;
 
 	one = alloc_filespec(concatpath);
 	two = alloc_filespec(concatpath);
@@ -7198,25 +7201,29 @@ void diff_addremove(struct diff_options *options,
 		two->dirty_submodule = dirty_submodule;
 	}
 
-	diff_queue(&diff_queued_diff, one, two);
+	pair = diff_queue(queue, one, two);
 	if (!options->flags.diff_from_contents)
 		options->flags.has_changes = 1;
+
+	return pair;
 }
 
-void diff_change(struct diff_options *options,
-		 unsigned old_mode, unsigned new_mode,
-		 const struct object_id *old_oid,
-		 const struct object_id *new_oid,
-		 int old_oid_valid, int new_oid_valid,
-		 const char *concatpath,
-		 unsigned old_dirty_submodule, unsigned new_dirty_submodule)
+struct diff_filepair *diff_queue_change(struct diff_queue_struct *queue,
+					struct diff_options *options,
+					unsigned old_mode, unsigned new_mode,
+					const struct object_id *old_oid,
+					const struct object_id *new_oid,
+					int old_oid_valid, int new_oid_valid,
+					const char *concatpath,
+					unsigned old_dirty_submodule,
+					unsigned new_dirty_submodule)
 {
 	struct diff_filespec *one, *two;
 	struct diff_filepair *p;
 
 	if (S_ISGITLINK(old_mode) && S_ISGITLINK(new_mode) &&
 	    is_submodule_ignored(concatpath, options))
-		return;
+		return NULL;
 
 	if (options->flags.reverse_diff) {
 		SWAP(old_mode, new_mode);
@@ -7227,7 +7234,7 @@ void diff_change(struct diff_options *options,
 
 	if (options->prefix &&
 	    strncmp(concatpath, options->prefix, options->prefix_length))
-		return;
+		return NULL;
 
 	one = alloc_filespec(concatpath);
 	two = alloc_filespec(concatpath);
@@ -7235,19 +7242,42 @@ void diff_change(struct diff_options *options,
 	fill_filespec(two, new_oid, new_oid_valid, new_mode);
 	one->dirty_submodule = old_dirty_submodule;
 	two->dirty_submodule = new_dirty_submodule;
-	p = diff_queue(&diff_queued_diff, one, two);
+	p = diff_queue(queue, one, two);
 
 	if (options->flags.diff_from_contents)
-		return;
+		return p;
 
 	if (options->flags.quick && options->skip_stat_unmatch &&
 	    !diff_filespec_check_stat_unmatch(options->repo, p)) {
 		diff_free_filespec_data(p->one);
 		diff_free_filespec_data(p->two);
-		return;
+		return p;
 	}
 
 	options->flags.has_changes = 1;
+
+	return p;
+}
+
+void diff_addremove(struct diff_options *options, int addremove, unsigned mode,
+		    const struct object_id *oid, int oid_valid,
+		    const char *concatpath, unsigned dirty_submodule)
+{
+	diff_queue_addremove(&diff_queued_diff, options, addremove, mode, oid,
+			     oid_valid, concatpath, dirty_submodule);
+}
+
+void diff_change(struct diff_options *options,
+		 unsigned old_mode, unsigned new_mode,
+		 const struct object_id *old_oid,
+		 const struct object_id *new_oid,
+		 int old_oid_valid, int new_oid_valid,
+		 const char *concatpath,
+		 unsigned old_dirty_submodule, unsigned new_dirty_submodule)
+{
+	diff_queue_change(&diff_queued_diff, options, old_mode, new_mode,
+			  old_oid, new_oid, old_oid_valid, new_oid_valid,
+			  concatpath, old_dirty_submodule, new_dirty_submodule);
 }
 
 struct diff_filepair *diff_unmerge(struct diff_options *options, const char *path)
