@@ -37,6 +37,10 @@ format.cc::
 	by mail.  See the --to and --cc options in
 	linkgit:git-format-patch[1].
 
+format.ccCmd::
+	Program to generate list of additional CC recipients for all patches.
+	See the --cc-cmd option in linkgit:git-format-patch[1].
+
 format.subjectPrefix::
 	The default for format-patch is to output files with the '[PATCH]'
 	subject prefix. Use this variable to change that prefix.

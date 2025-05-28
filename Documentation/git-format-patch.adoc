@@ -22,7 +22,7 @@ SYNOPSIS
 		   [--cover-from-description=<mode>]
 		   [--rfc[=<rfc>]] [--subject-prefix=<subject-prefix>]
 		   [(--reroll-count|-v) <n>]
-		   [--to=<email>] [--cc=<email>]
+		   [--to=<email>] [--cc=<email>] [--cc-cmd=<program>]
 		   [--[no-]cover-letter] [--quiet]
 		   [--[no-]encode-email-headers]
 		   [--no-notes | --notes[=<ref>]]
@@ -279,6 +279,11 @@ e.g., `--rfc='-(WIP)'` results in "PATCH (WIP)".
 	to any configured headers, and may be used multiple times.
 	The negated form `--no-cc` discards all `Cc:` headers added so
 	far (from config or command line).
+
+--cc-cmd=<program>::
+	Specify a program to execute which generates a list of recipients to CC
+	on all patches. Output of this program must be a single email address
+	per line. This option overrides `format.ccCmd` configuration.
 
 --from::
 --from=<ident>::

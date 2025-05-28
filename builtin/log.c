@@ -40,6 +40,7 @@
 #include "mailmap.h"
 #include "progress.h"
 #include "commit-slab.h"
+#include "run-command.h"
 
 #include "commit-reach.h"
 #include "range-diff.h"
@@ -1001,6 +1002,7 @@ struct format_config {
 	struct string_list extra_hdr;
 	struct string_list extra_to;
 	struct string_list extra_cc;
+	char *cc_cmd;
 	int keep_subject;
 	int subject_prefix;
 	struct strbuf sprefix;
@@ -1034,6 +1036,7 @@ static void format_config_release(struct format_config *cfg)
 	string_list_clear(&cfg->extra_cc, 0);
 	strbuf_release(&cfg->sprefix);
 	free(cfg->fmt_patch_suffix);
+	free(cfg->cc_cmd);
 }
 
 static enum cover_from_description parse_cover_from_description(const char *arg)
@@ -1097,6 +1100,12 @@ static int git_format_config(const char *var, const char *value,
 		if (!value)
 			return config_error_nonbool(var);
 		string_list_append(&cfg->extra_cc, value);
+		return 0;
+	}
+	if (!strcmp(var, "format.cccmd")) {
+		if (!value)
+			return config_error_nonbool(var);
+		cfg->cc_cmd = xstrdup(value);
 		return 0;
 	}
 	if (!strcmp(var, "diff.color") || !strcmp(var, "color.diff") ||
@@ -1995,6 +2004,27 @@ static void infer_range_diff_ranges(struct strbuf *r1,
 	}
 }
 
+static void run_cc_cmd(const char *prog, struct string_list *cc_list)
+{
+	struct child_process cmd = CHILD_PROCESS_INIT;
+	struct strbuf line = STRBUF_INIT;
+	FILE *fh;
+
+	strvec_push(&cmd.args, prog);
+	cmd.out = -1;
+
+	if (start_command(&cmd))
+		return;
+
+	fh = xfdopen(cmd.out, "r");
+	while (strbuf_getline(&line, fh) != EOF)
+		string_list_append(cc_list, line.buf);
+
+	fclose(fh);
+	finish_command(&cmd);
+	strbuf_release(&line);
+}
+
 int cmd_format_patch(int argc,
 		     const char **argv,
 		     const char *prefix,
@@ -2045,6 +2075,7 @@ int cmd_format_patch(int argc,
 		.revs = &rev,
 	};
 	const char *fmt_patch_suffix = NULL;
+	const char *cc_cmd = NULL;
 
 	const struct option builtin_format_patch_options[] = {
 		OPT_CALLBACK_F('n', "numbered", &cfg, NULL,
@@ -2099,6 +2130,8 @@ int cmd_format_patch(int argc,
 			    N_("add email header"), header_callback),
 		OPT_STRING_LIST(0, "to", &cfg.extra_to, N_("email"), N_("add To: header")),
 		OPT_STRING_LIST(0, "cc", &cfg.extra_cc, N_("email"), N_("add Cc: header")),
+		OPT_STRING(0, "cc-cmd", &cc_cmd, N_("program"),
+			   N_("program to generate additional Cc addresses for all patches")),
 		OPT_CALLBACK_F(0, "from", &cfg.from, N_("ident"),
 			    N_("set From address to <ident> (or committer ident if absent)"),
 			    PARSE_OPT_OPTARG, from_callback),
@@ -2218,6 +2251,9 @@ int cmd_format_patch(int argc,
 			strbuf_addch(&buf, ',');
 		strbuf_addch(&buf, '\n');
 	}
+
+	if (cc_cmd || cfg.cc_cmd)
+		run_cc_cmd(cc_cmd ? cc_cmd : cfg.cc_cmd, &cfg.extra_cc);
 
 	if (cfg.extra_cc.nr)
 		strbuf_addstr(&buf, "Cc: ");

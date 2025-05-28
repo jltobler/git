@@ -2547,4 +2547,30 @@ test_expect_success 'format-patch --default-prefix overrides format.noprefix' '
 	grep "^--- a/blorp" actual
 '
 
+test_expect_success 'additional cc from --cc-cmd' '
+	test_when_finished "rm -f foo.sh" &&
+
+	write_script foo.sh <<-\EOF &&
+	printf "%s\n" foo@bar.baz
+	EOF
+
+	git format-patch --no-cc --cc-cmd="$PWD/foo.sh" --stdout -2 >actual &&
+
+	grep -c "^Cc: foo@bar.baz" actual >count &&
+	test "$(cat count)" -eq 2
+'
+
+test_expect_success 'additional cc from format.ccCmd config' '
+	test_when_finished "rm -f foo.sh" &&
+
+	write_script foo.sh <<-\EOF &&
+	printf "%s\n" foo@bar.baz
+	EOF
+
+	git -c format.ccCmd="$PWD/foo.sh" format-patch --no-cc --stdout -2 >actual &&
+
+	grep -c "^Cc: foo@bar.baz" actual >count &&
+	test "$(cat count)" -eq 2
+'
+
 test_done
