@@ -8,7 +8,7 @@
 #include "odb.h"
 
 void prepare_loose_object_bulk_checkin(struct odb_transaction *transaction);
-void fsync_loose_object_bulk_checkin(int fd, const char *filename);
+void fsync_loose_object_bulk_checkin(struct odb_transaction *transaction, int fd, const char *filename);
 
 /*
  * This creates one packfile per large blob unless bulk-checkin
@@ -43,7 +43,7 @@ struct odb_transaction *begin_odb_transaction(struct object_database *odb);
  * database transaction visible. It is valid to call this function
  * even if no transaction is active.
  */
-void flush_odb_transaction(void);
+void flush_odb_transaction(struct odb_transaction *transaction);
 
 /*
  * Tell the object database to make any objects from the

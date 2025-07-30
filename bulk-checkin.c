@@ -19,8 +19,6 @@
 #include "object-file.h"
 #include "odb.h"
 
-static struct tmp_objdir *bulk_fsync_objdir;
-
 static struct bulk_checkin_packfile {
 	char *pack_tmp_name;
 	struct hashfile *f;
@@ -94,12 +92,12 @@ clear_exit:
 /*
  * Cleanup after batch-mode fsync_object_files.
  */
-static void flush_batch_fsync(void)
+static void flush_batch_fsync(struct odb_transaction *transaction)
 {
 	struct strbuf temp_path = STRBUF_INIT;
 	struct tempfile *temp;
 
-	if (!bulk_fsync_objdir)
+	if (!transaction->objdir)
 		return;
 
 	/*
@@ -121,8 +119,8 @@ static void flush_batch_fsync(void)
 	 * Make the object files visible in the primary ODB after their data is
 	 * fully durable.
 	 */
-	tmp_objdir_migrate(bulk_fsync_objdir);
-	bulk_fsync_objdir = NULL;
+	tmp_objdir_migrate(transaction->objdir);
+	transaction->objdir = NULL;
 }
 
 static int already_written(struct bulk_checkin_packfile *state, struct object_id *oid)
@@ -329,15 +327,15 @@ void prepare_loose_object_bulk_checkin(struct odb_transaction *transaction)
 	 * callers may not know whether any objects will be
 	 * added at the time they call begin_odb_transaction.
 	 */
-	if (!transaction || !transaction->nesting || bulk_fsync_objdir)
+	if (!transaction || !transaction->nesting || transaction->objdir)
 		return;
 
-	bulk_fsync_objdir = tmp_objdir_create(the_repository, "bulk-fsync");
-	if (bulk_fsync_objdir)
-		tmp_objdir_replace_primary_odb(bulk_fsync_objdir, 0);
+	transaction->objdir = tmp_objdir_create(the_repository, "bulk-fsync");
+	if (transaction->objdir)
+		tmp_objdir_replace_primary_odb(transaction->objdir, 0);
 }
 
-void fsync_loose_object_bulk_checkin(int fd, const char *filename)
+void fsync_loose_object_bulk_checkin(struct odb_transaction *transaction, int fd, const char *filename)
 {
 	/*
 	 * If we have an active ODB transaction, we issue a call that
@@ -346,7 +344,7 @@ void fsync_loose_object_bulk_checkin(int fd, const char *filename)
 	 * before renaming the objects to their final names as part of
 	 * flush_batch_fsync.
 	 */
-	if (!bulk_fsync_objdir ||
+	if (!transaction->objdir ||
 	    git_fsync(fd, FSYNC_WRITEOUT_ONLY) < 0) {
 		if (errno == ENOSYS)
 			warning(_("core.fsyncMethod = batch is unsupported on this platform"));
@@ -375,9 +373,9 @@ struct odb_transaction *begin_odb_transaction(struct object_database *odb)
 	return odb->transaction;
 }
 
-void flush_odb_transaction(void)
+void flush_odb_transaction(struct odb_transaction *transaction)
 {
-	flush_batch_fsync();
+	flush_batch_fsync(transaction);
 	flush_bulk_checkin_packfile(&bulk_checkin_packfile);
 }
 
@@ -390,5 +388,5 @@ void end_odb_transaction(struct odb_transaction *transaction)
 	if (transaction->nesting)
 		return;
 
-	flush_odb_transaction();
+	flush_odb_transaction(transaction);
 }

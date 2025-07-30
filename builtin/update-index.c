@@ -77,7 +77,7 @@ static void report(const char *fmt, ...)
 	 * objects invisible while a transaction is active, so flush the
 	 * transaction here before reporting a change made by update-index.
 	 */
-	flush_odb_transaction();
+	flush_odb_transaction(the_repository->objects->transaction);
 	va_start(vp, fmt);
 	vprintf(fmt, vp);
 	putchar('\n');

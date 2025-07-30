@@ -84,6 +84,7 @@ struct odb_source {
 
 struct odb_transaction {
 	int nesting;
+	struct tmp_objdir *objdir;
 };
 
 struct packed_git;
