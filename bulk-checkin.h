@@ -5,8 +5,9 @@
 #define BULK_CHECKIN_H
 
 #include "object.h"
+#include "odb.h"
 
-void prepare_loose_object_bulk_checkin(void);
+void prepare_loose_object_bulk_checkin(struct odb_transaction *transaction);
 void fsync_loose_object_bulk_checkin(int fd, const char *filename);
 
 /*
@@ -24,7 +25,7 @@ void fsync_loose_object_bulk_checkin(int fd, const char *filename);
  * binary blobs, they generally do not want to get any conversion, and
  * callers should avoid this code path when filters are requested.
  */
-int index_blob_bulk_checkin(struct object_id *oid,
+int index_blob_bulk_checkin(struct odb_transaction *transaction, struct object_id *oid,
 			    int fd, size_t size,
 			    const char *path, unsigned flags);
 
@@ -35,7 +36,7 @@ int index_blob_bulk_checkin(struct object_id *oid,
  * and objects are only visible after the outermost transaction
  * is complete or the transaction is flushed.
  */
-void begin_odb_transaction(void);
+struct odb_transaction *begin_odb_transaction(struct object_database *odb);
 
 /*
  * Make any objects that are currently part of a pending object
@@ -49,6 +50,6 @@ void flush_odb_transaction(void);
  * current transaction visible if this is the final nested
  * transaction.
  */
-void end_odb_transaction(void);
+void end_odb_transaction(struct odb_transaction *transaction);
 
 #endif

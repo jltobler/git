@@ -19,8 +19,6 @@
 #include "object-file.h"
 #include "odb.h"
 
-static int odb_transaction_nesting;
-
 static struct tmp_objdir *bulk_fsync_objdir;
 
 static struct bulk_checkin_packfile {
@@ -323,7 +321,7 @@ static int deflate_blob_to_pack(struct bulk_checkin_packfile *state,
 	return 0;
 }
 
-void prepare_loose_object_bulk_checkin(void)
+void prepare_loose_object_bulk_checkin(struct odb_transaction *transaction)
 {
 	/*
 	 * We lazily create the temporary object directory
@@ -331,7 +329,7 @@ void prepare_loose_object_bulk_checkin(void)
 	 * callers may not know whether any objects will be
 	 * added at the time they call begin_odb_transaction.
 	 */
-	if (!odb_transaction_nesting || bulk_fsync_objdir)
+	if (!transaction || !transaction->nesting || bulk_fsync_objdir)
 		return;
 
 	bulk_fsync_objdir = tmp_objdir_create(the_repository, "bulk-fsync");
@@ -356,20 +354,25 @@ void fsync_loose_object_bulk_checkin(int fd, const char *filename)
 	}
 }
 
-int index_blob_bulk_checkin(struct object_id *oid,
+int index_blob_bulk_checkin(struct odb_transaction *transaction, struct object_id *oid,
 			    int fd, size_t size,
 			    const char *path, unsigned flags)
 {
 	int status = deflate_blob_to_pack(&bulk_checkin_packfile, oid, fd, size,
 					  path, flags);
-	if (!odb_transaction_nesting)
+	if (!transaction || !transaction->nesting)
 		flush_bulk_checkin_packfile(&bulk_checkin_packfile);
 	return status;
 }
 
-void begin_odb_transaction(void)
+struct odb_transaction *begin_odb_transaction(struct object_database *odb)
 {
-	odb_transaction_nesting += 1;
+	if (!odb->transaction)
+		CALLOC_ARRAY(odb->transaction, 1);
+
+	odb->transaction->nesting++;
+
+	return odb->transaction;
 }
 
 void flush_odb_transaction(void)
@@ -378,13 +381,13 @@ void flush_odb_transaction(void)
 	flush_bulk_checkin_packfile(&bulk_checkin_packfile);
 }
 
-void end_odb_transaction(void)
+void end_odb_transaction(struct odb_transaction *transaction)
 {
-	odb_transaction_nesting -= 1;
-	if (odb_transaction_nesting < 0)
+	transaction->nesting--;
+	if (transaction->nesting < 0)
 		BUG("Unbalanced ODB transaction nesting");
 
-	if (odb_transaction_nesting)
+	if (transaction->nesting)
 		return;
 
 	flush_odb_transaction();
