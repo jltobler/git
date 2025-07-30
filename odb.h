@@ -82,6 +82,10 @@ struct odb_source {
 	char *path;
 };
 
+struct odb_transaction {
+	int nesting;
+};
+
 struct packed_git;
 struct cached_object_entry;
 
@@ -93,6 +97,8 @@ struct cached_object_entry;
 struct object_database {
 	/* Repository that owns this database. */
 	struct repository *repo;
+
+	struct odb_transaction *transaction;
 
 	/*
 	 * Set of all object directories; the main directory is first (and

@@ -1027,6 +1027,8 @@ void odb_clear(struct object_database *o)
 	o->commit_graph = NULL;
 	o->commit_graph_attempted = 0;
 
+	FREE_AND_NULL(o->transaction);
+
 	free_object_directories(o);
 	o->sources_tail = NULL;
 	o->loaded_alternates = 0;
