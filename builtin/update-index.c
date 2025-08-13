@@ -70,14 +70,6 @@ static void report(const char *fmt, ...)
 	if (!verbose)
 		return;
 
-	/*
-	 * It is possible, though unlikely, that a caller could use the verbose
-	 * output to synchronize with addition of objects to the object
-	 * database. The current implementation of ODB transactions leaves
-	 * objects invisible while a transaction is active, so flush the
-	 * transaction here before reporting a change made by update-index.
-	 */
-	flush_odb_transaction();
 	va_start(vp, fmt);
 	vprintf(fmt, vp);
 	putchar('\n');
@@ -927,6 +919,7 @@ int cmd_update_index(int argc,
 	int newfd, entries, has_errors = 0, nul_term_line = 0;
 	enum uc_mode untracked_cache = UC_UNSPECIFIED;
 	int read_from_stdin = 0;
+	int skip_transaction;
 	int prefix_length = prefix ? strlen(prefix) : 0;
 	int preferred_index_format = 0;
 	char set_executable_bit = 0;
@@ -1127,10 +1120,21 @@ int cmd_update_index(int argc,
 			    options, PARSE_OPT_STOP_AT_NON_OPTION);
 
 	/*
+	 * With batch fsync, callers using the --stdin option will not see newly
+	 * added objects until update-index is complete. A caller may use the
+	 * --verbose option to synchoronize with addition of objects to the
+	 * object datebase. In such cases, skip creating a transaction
+	 * altogether.
+	 */
+	skip_transaction = read_from_stdin && verbose;
+
+	/*
 	 * Allow the object layer to optimize adding multiple objects in
 	 * a batch.
 	 */
-	begin_odb_transaction();
+	if (!skip_transaction)
+		begin_odb_transaction();
+
 	while (ctx.argc) {
 		if (parseopt_state != PARSE_OPT_DONE)
 			parseopt_state = parse_options_step(&ctx, options,
@@ -1213,7 +1217,8 @@ int cmd_update_index(int argc,
 	/*
 	 * By now we have added all of the new objects
 	 */
-	end_odb_transaction();
+	if (!skip_transaction)
+		end_odb_transaction();
 
 	if (split_index > 0) {
 		if (repo_config_get_split_index(the_repository) == 0)
