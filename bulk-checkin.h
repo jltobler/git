@@ -38,13 +38,6 @@ int index_blob_bulk_checkin(struct object_id *oid,
 void begin_odb_transaction(void);
 
 /*
- * Make any objects that are currently part of a pending object
- * database transaction visible. It is valid to call this function
- * even if no transaction is active.
- */
-void flush_odb_transaction(void);
-
-/*
  * Tell the object database to make any objects from the
  * current transaction visible if this is the final nested
  * transaction.

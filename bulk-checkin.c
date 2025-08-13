@@ -372,12 +372,6 @@ void begin_odb_transaction(void)
 	odb_transaction_nesting += 1;
 }
 
-void flush_odb_transaction(void)
-{
-	flush_batch_fsync();
-	flush_bulk_checkin_packfile(&bulk_checkin_packfile);
-}
-
 void end_odb_transaction(void)
 {
 	odb_transaction_nesting -= 1;
@@ -387,5 +381,6 @@ void end_odb_transaction(void)
 	if (odb_transaction_nesting)
 		return;
 
-	flush_odb_transaction();
+	flush_batch_fsync();
+	flush_bulk_checkin_packfile(&bulk_checkin_packfile);
 }
