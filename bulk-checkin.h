@@ -39,7 +39,7 @@ int index_blob_bulk_checkin(struct odb_transaction *transaction,
  * and objects are only visible after the outermost transaction
  * is complete or the transaction is flushed.
  */
-void begin_odb_transaction(struct object_database *odb);
+struct odb_transaction *begin_odb_transaction(struct object_database *odb);
 
 /*
  * Make any objects that are currently part of a pending object
