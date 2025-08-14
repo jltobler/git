@@ -23,6 +23,8 @@ struct multi_pack_index;
  */
 char *compute_alternate_path(const char *path, struct strbuf *err);
 
+struct odb_transaction;
+
 /*
  * The source is the part of the object database that stores the actual
  * objects. It thus encapsulates the logic to read and write the specific
@@ -93,6 +95,13 @@ struct cached_object_entry;
 struct object_database {
 	/* Repository that owns this database. */
 	struct repository *repo;
+
+	/*
+	 * State of current current object database transaction. Only one
+	 * transaction may be pending at a time. Is NULL when no transaction is
+	 * configured.
+	 */
+	struct odb_transaction *transaction;
 
 	/*
 	 * Set of all object directories; the main directory is first (and
