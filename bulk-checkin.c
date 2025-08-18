@@ -37,7 +37,8 @@ struct odb_transaction {
 	struct bulk_checkin_packfile packfile;
 };
 
-static void finish_tmp_packfile(struct strbuf *basename,
+static void finish_tmp_packfile(struct repository *repo,
+				struct strbuf *basename,
 				const char *pack_tmp_name,
 				struct pack_idx_entry **written_list,
 				uint32_t nr_written,
@@ -46,15 +47,16 @@ static void finish_tmp_packfile(struct strbuf *basename,
 {
 	char *idx_tmp_name = NULL;
 
-	stage_tmp_packfiles(the_repository, basename, pack_tmp_name,
+	stage_tmp_packfiles(repo, basename, pack_tmp_name,
 			    written_list, nr_written, NULL, pack_idx_opts, hash,
 			    &idx_tmp_name);
-	rename_tmp_packfile_idx(the_repository, basename, &idx_tmp_name);
+	rename_tmp_packfile_idx(repo, basename, &idx_tmp_name);
 
 	free(idx_tmp_name);
 }
 
-static void flush_bulk_checkin_packfile(struct bulk_checkin_packfile *state)
+static void flush_bulk_checkin_packfile(struct bulk_checkin_packfile *state,
+					struct repository *repo)
 {
 	unsigned char hash[GIT_MAX_RAWSZ];
 	struct strbuf packname = STRBUF_INIT;
@@ -78,9 +80,9 @@ static void flush_bulk_checkin_packfile(struct bulk_checkin_packfile *state)
 		close(fd);
 	}
 
-	strbuf_addf(&packname, "%s/pack/pack-%s.", repo_get_object_directory(the_repository),
+	strbuf_addf(&packname, "%s/pack/pack-%s.", repo_get_object_directory(repo),
 		    hash_to_hex(hash));
-	finish_tmp_packfile(&packname, state->pack_tmp_name,
+	finish_tmp_packfile(repo, &packname, state->pack_tmp_name,
 			    state->written, state->nr_written,
 			    &state->pack_idx_opts, hash);
 	for (uint32_t i = 0; i < state->nr_written; i++)
@@ -93,7 +95,7 @@ clear_exit:
 
 	strbuf_release(&packname);
 	/* Make objects we just wrote available to ourselves */
-	reprepare_packed_git(the_repository);
+	reprepare_packed_git(repo);
 }
 
 /*
@@ -116,7 +118,7 @@ static void flush_batch_fsync(struct odb_transaction *transaction)
 	 * to ensure that the data in each new object file is durable before
 	 * the final name is visible.
 	 */
-	strbuf_addf(&temp_path, "%s/bulk_fsync_XXXXXX", repo_get_object_directory(the_repository));
+	strbuf_addf(&temp_path, "%s/bulk_fsync_XXXXXX", repo_get_object_directory(transaction->odb->repo));
 	temp = xmks_tempfile(temp_path.buf);
 	fsync_or_die(get_tempfile_fd(temp), get_tempfile_path(temp));
 	delete_tempfile(&temp);
@@ -130,10 +132,11 @@ static void flush_batch_fsync(struct odb_transaction *transaction)
 	transaction->objdir = NULL;
 }
 
-static int already_written(struct bulk_checkin_packfile *state, struct object_id *oid)
+static int already_written(struct bulk_checkin_packfile *state,
+			   struct repository *repo, struct object_id *oid)
 {
 	/* The object may already exist in the repository */
-	if (odb_has_object(the_repository->objects, oid,
+	if (odb_has_object(repo->objects, oid,
 			   HAS_OBJECT_RECHECK_PACKED | HAS_OBJECT_FETCH_PROMISOR))
 		return 1;
 
@@ -239,12 +242,13 @@ static int stream_blob_to_pack(struct bulk_checkin_packfile *state,
 
 /* Lazily create backing packfile for the state */
 static void prepare_to_stream(struct bulk_checkin_packfile *state,
+			      struct repository *repo,
 			      unsigned flags)
 {
 	if (!(flags & INDEX_WRITE_OBJECT) || state->f)
 		return;
 
-	state->f = create_tmp_packfile(the_repository, &state->pack_tmp_name);
+	state->f = create_tmp_packfile(repo, &state->pack_tmp_name);
 	reset_pack_idx_option(&state->pack_idx_opts);
 
 	/* Pretend we are going to write only one object */
@@ -254,6 +258,7 @@ static void prepare_to_stream(struct bulk_checkin_packfile *state,
 }
 
 static int deflate_blob_to_pack(struct bulk_checkin_packfile *state,
+				struct repository *repo,
 				struct object_id *result_oid,
 				int fd, size_t size,
 				const char *path, unsigned flags)
@@ -278,14 +283,14 @@ static int deflate_blob_to_pack(struct bulk_checkin_packfile *state,
 	if ((flags & INDEX_WRITE_OBJECT) != 0) {
 		CALLOC_ARRAY(idx, 1);
 
-		prepare_to_stream(state, flags);
+		prepare_to_stream(state, repo, flags);
 		hashfile_checkpoint_init(state->f, &checkpoint);
 	}
 
 	already_hashed_to = 0;
 
 	while (1) {
-		prepare_to_stream(state, flags);
+		prepare_to_stream(state, repo, flags);
 		if (idx) {
 			hashfile_checkpoint(state->f, &checkpoint);
 			idx->offset = state->offset;
@@ -303,7 +308,7 @@ static int deflate_blob_to_pack(struct bulk_checkin_packfile *state,
 			BUG("should not happen");
 		hashfile_truncate(state->f, &checkpoint);
 		state->offset = checkpoint.offset;
-		flush_bulk_checkin_packfile(state);
+		flush_bulk_checkin_packfile(state, repo);
 		if (lseek(fd, seekback, SEEK_SET) == (off_t) -1)
 			return error("cannot seek back");
 	}
@@ -312,7 +317,7 @@ static int deflate_blob_to_pack(struct bulk_checkin_packfile *state,
 		return 0;
 
 	idx->crc32 = crc32_end(state->f);
-	if (already_written(state, result_oid)) {
+	if (already_written(state, repo, result_oid)) {
 		hashfile_truncate(state->f, &checkpoint);
 		state->offset = checkpoint.offset;
 		free(idx);
@@ -337,7 +342,7 @@ void prepare_loose_object_bulk_checkin(struct odb_transaction *transaction)
 	if (!transaction || transaction->objdir)
 		return;
 
-	transaction->objdir = tmp_objdir_create(the_repository, "bulk-fsync");
+	transaction->objdir = tmp_objdir_create(transaction->odb->repo, "bulk-fsync");
 	if (transaction->objdir)
 		tmp_objdir_replace_primary_odb(transaction->objdir, 0);
 }
@@ -367,7 +372,8 @@ int index_blob_bulk_checkin(struct odb_transaction *transaction,
 	int status;
 
 	if (transaction) {
-		status = deflate_blob_to_pack(&transaction->packfile, oid, fd,
+		status = deflate_blob_to_pack(&transaction->packfile, 
+					      transaction->odb->repo, oid, fd,
 					      size, path, flags);
 	} else {
 		struct bulk_checkin_packfile state = {0};
