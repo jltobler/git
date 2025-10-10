@@ -130,4 +130,31 @@ test_expect_success 'diff --stat with binary files and big change count' '
 	test_cmp expect actual
 '
 
+test_expect_success 'diff --report-binary-files' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+
+		echo foo >foo &&
+		git add foo &&
+		git commit -m foo &&
+
+		printf "\0foo\0" >foo &&
+		git commit -am binary &&
+
+		cat >expect <<-\EOF &&
+		diff --git a/foo b/foo
+		index 257cc56..a60073c 100644
+		Binary files a/foo and b/foo differ
+		a/foo: text
+		b/foo: binary
+		EOF
+
+		git diff --report-binary-files HEAD~ HEAD >out &&
+
+		test_cmp expect out
+	)
+'
+
 test_done

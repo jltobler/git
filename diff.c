@@ -3534,6 +3534,15 @@ static int set_diff_algorithm(struct diff_options *opts,
 	return 0;
 }
 
+static void report_binary_file(struct strbuf *buf,
+			       struct repository *repo,
+			       struct diff_filespec *spec,
+			       const char *path)
+{
+	const char *type = diff_filespec_is_binary(repo, spec) ? "binary" : "text";
+	strbuf_addf(buf, "%s: %s\n", path, type);
+}
+
 static void builtin_diff(const char *name_a,
 			 const char *name_b,
 			 struct diff_filespec *one,
@@ -3675,6 +3684,10 @@ static void builtin_diff(const char *name_a,
 					 header.buf, header.len, 0);
 			strbuf_addf(&sb, "%sBinary files %s and %s differ\n",
 				    diff_line_prefix(o), lbl[0], lbl[1]);
+			if (o->report_binary_files) {
+				report_binary_file(&sb, o->repo, one, lbl[0]);
+				report_binary_file(&sb, o->repo, two, lbl[1]);
+			}
 			emit_diff_symbol(o, DIFF_SYMBOL_BINARY_FILES,
 					 sb.buf, sb.len, 0);
 			strbuf_release(&sb);
@@ -3699,6 +3712,10 @@ static void builtin_diff(const char *name_a,
 		else {
 			strbuf_addf(&sb, "%sBinary files %s and %s differ\n",
 				    diff_line_prefix(o), lbl[0], lbl[1]);
+			if (o->report_binary_files) {
+				report_binary_file(&sb, o->repo, one, lbl[0]);
+				report_binary_file(&sb, o->repo, two, lbl[1]);
+			}
 			emit_diff_symbol(o, DIFF_SYMBOL_BINARY_FILES,
 					 sb.buf, sb.len, 0);
 			strbuf_release(&sb);
@@ -5741,6 +5758,8 @@ struct option *add_diff_options(const struct option *opts,
 		OPT_CALLBACK_F(0, "binary", options, NULL,
 			       N_("output a binary diff that can be applied"),
 			       PARSE_OPT_NONEG | PARSE_OPT_NOARG, diff_opt_binary),
+		OPT_BOOL(0, "report-binary-files", &options->report_binary_files,
+			 N_("report if pre- and post-image blobs are binary")),
 		OPT_BOOL(0, "full-index", &options->flags.full_index,
 			 N_("show full pre- and post-image object names on the \"index\" lines")),
 		OPT_COLOR_FLAG(0, "color", &options->use_color,

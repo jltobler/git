@@ -369,6 +369,13 @@ struct diff_options {
 	 */
 	int skip_resolving_statuses;
 
+	/*
+	 * When generating patch diff output and a binary file is encountered,
+	 * after printing the "Binary files differ" message, append a line for
+	 * each file indicating whether Git considered it binary or text.
+	 */
+	int report_binary_files;
+
 	/* Callback which allows tweaking the options in diff_setup_done(). */
 	void (*set_default)(struct diff_options *);
 
