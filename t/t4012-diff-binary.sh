@@ -130,4 +130,33 @@ test_expect_success 'diff --stat with binary files and big change count' '
 	test_cmp expect actual
 '
 
+test_expect_success SHA1 'diff --report-binary-files' '
+	test_when_finished "rm -rf repo" &&
+	git init repo &&
+	(
+		cd repo &&
+
+		echo foo >foo &&
+		printf "\0bar\0" >bar &&
+		echo baz >baz &&
+		git add foo bar baz &&
+		git commit -m foo &&
+
+		printf "\0foo\0" >foo &&
+		printf "\0bar2\0" >bar &&
+		echo baz2 >baz &&
+		git commit -am "binary foo" &&
+
+		cat >expect <<-\EOF &&
+		:100644 100644 e02d9a3a8aeb904ccc3bb9ed0600f2e963ba1a10 884a24af772a87733e911a3491c0ab576d34c06c bb M	bar
+		:100644 100644 76018072e09c5d31c8c6e3113b8aa0fe625195ca 3414c84ca6b7ca9cbbe40dd44f4d0715c1464f6e tt M	baz
+		:100644 100644 257cc5642cb1a054f08cc83f2d943e56fd3ebe99 a60073ceafeca287824d7b9ac3eebef233b72fce tb M	foo
+		EOF
+
+		git diff-tree --report-binary-files HEAD~ HEAD >out &&
+
+		test_cmp expect out
+	)
+'
+
 test_done

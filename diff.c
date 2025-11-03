@@ -5747,6 +5747,8 @@ struct option *add_diff_options(const struct option *opts,
 		OPT_CALLBACK_F(0, "binary", options, NULL,
 			       N_("output a binary diff that can be applied"),
 			       PARSE_OPT_NONEG | PARSE_OPT_NOARG, diff_opt_binary),
+		OPT_BOOL(0, "report-binary-files", &options->report_binary_files,
+			 N_("report if pre- and post-image blobs are binary")),
 		OPT_BOOL(0, "full-index", &options->flags.full_index,
 			 N_("show full pre- and post-image object names on the \"index\" lines")),
 		OPT_COLOR_FLAG(0, "color", &options->use_color,
@@ -6111,6 +6113,13 @@ static void diff_flush_raw(struct diff_filepair *p, struct diff_options *opt)
 		fprintf(opt->file, "%s ",
 			diff_aligned_abbrev(&p->two->oid, opt->abbrev));
 	}
+
+	if (opt->report_binary_files) {
+		char one = diff_filespec_is_binary(opt->repo, p->one) ? 'b' : 't';
+		char two = diff_filespec_is_binary(opt->repo, p->two) ? 'b' : 't';
+		fprintf(opt->file, "%c%c ", one, two);
+	}
+
 	if (p->score) {
 		fprintf(opt->file, "%c%03d%c", p->status, similarity_index(p),
 			inter_name_termination);

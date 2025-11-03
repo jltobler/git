@@ -369,6 +369,12 @@ struct diff_options {
 	 */
 	int skip_resolving_statuses;
 
+	/*
+	 * When generating raw diff output, report for each file whether it was
+	 * considered binary.
+	 */
+	int report_binary_files;
+
 	/* Callback which allows tweaking the options in diff_setup_done(). */
 	void (*set_default)(struct diff_options *);
 

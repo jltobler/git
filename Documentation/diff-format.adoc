@@ -83,6 +83,18 @@ quoted as explained for the configuration variable `core.quotePath`
 (see linkgit:git-config[1]).  Using `-z` the filename is output
 verbatim and the line is terminated by a NUL byte.
 
+With the `--report-binary-files` option, a new column is added prior to the
+status indicating for each file if Git considered it binary or not. If
+considered binary, a file is denoted with `b`. Otherwise, `t` is used. This
+column is followed by a space character. Combined diffs do not report binary
+file info.
+
+Example:
+
+------------------------------------------------
+:100644 100644 5be4a4a cc95eb0 bt M file.c
+------------------------------------------------
+
 diff format for merges
 ----------------------
 
