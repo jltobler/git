@@ -237,6 +237,8 @@ enum diff_submodule_format {
 	DIFF_SUBMODULE_INLINE_DIFF
 };
 
+#define DIFF_RAW_EXTENDED_BINARY (1 << 0)
+
 /**
  * the set of options the calling program wants to affect the operation of
  * diffcore library with.
@@ -374,6 +376,8 @@ struct diff_options {
 	 * considered binary.
 	 */
 	int report_binary_files;
+
+	unsigned int raw_extended;
 
 	/* Callback which allows tweaking the options in diff_setup_done(). */
 	void (*set_default)(struct diff_options *);

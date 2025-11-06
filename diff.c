@@ -5663,6 +5663,29 @@ static int diff_opt_max_depth(const struct option *opt,
 	return 0;
 }
 
+static int diff_opt_raw_extended(const struct option *opt,
+				 const char *arg, int unset)
+{
+	struct string_list list = STRING_LIST_INIT_DUP;
+	struct diff_options *options = opt->value;
+	struct string_list_item *item;
+
+	BUG_ON_OPT_NEG(unset);
+
+	string_list_split(&list, arg, ",", -1);
+	for_each_string_list_item(item, &list) {
+		if (!strcmp(item->string, "binary"))
+			options->raw_extended |= DIFF_RAW_EXTENDED_BINARY;
+		else
+			return error(_("invalid value for '%s': '%s'"),
+				     "--raw_extended", item->string);
+	}
+
+	string_list_clear(&list, 0);
+
+	return 0;
+}
+
 /*
  * Consider adding new flags to __git_diff_common_options
  * in contrib/completion/git-completion.bash
@@ -5747,6 +5770,9 @@ struct option *add_diff_options(const struct option *opts,
 		OPT_CALLBACK_F(0, "binary", options, NULL,
 			       N_("output a binary diff that can be applied"),
 			       PARSE_OPT_NONEG | PARSE_OPT_NOARG, diff_opt_binary),
+		OPT_CALLBACK_F(0, "raw-extended", options, N_("<mode>"),
+			       N_("extend raw diff output with specified additional info"),
+			       PARSE_OPT_NONEG, diff_opt_raw_extended),
 		OPT_BOOL(0, "report-binary-files", &options->report_binary_files,
 			 N_("report if pre- and post-image blobs are binary")),
 		OPT_BOOL(0, "full-index", &options->flags.full_index,

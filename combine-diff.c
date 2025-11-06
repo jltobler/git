@@ -1223,6 +1223,30 @@ static void show_patch_diff(struct combine_diff_path *elem, int num_parent,
 	free(sline);
 }
 
+static int entry_is_binary(struct repository *repo, struct object_id *oid,
+			   unsigned int mode, char *path)
+{
+	struct userdiff_driver *driver;
+	unsigned long size;
+	int is_binary = 0;
+	char *buf;
+
+	driver = userdiff_find_by_path(repo->index, path);
+	if (!driver)
+		driver = userdiff_find_by_name("default");
+
+	if (driver->binary != -1)
+		return driver->binary;
+
+	buf = grab_blob(repo, oid, mode, &size, NULL, NULL);
+	if (buffer_is_binary(buf, size))
+		is_binary = 1;
+
+	free(buf);
+
+	return is_binary;
+}
+
 static void show_raw_diff(struct combine_diff_path *p, int num_parent, struct rev_info *rev)
 {
 	struct diff_options *opt = &rev->diffopt;
@@ -1255,6 +1279,13 @@ static void show_raw_diff(struct combine_diff_path *p, int num_parent, struct re
 			printf(" %s", diff_aligned_abbrev(&p->parent[i].oid,
 							  opt->abbrev));
 		printf(" %s ", diff_aligned_abbrev(&p->oid, opt->abbrev));
+
+		if (opt->raw_extended & DIFF_RAW_EXTENDED_BINARY) {
+			printf("binary=");
+			for (i = 0; i < num_parent; i++)
+				putchar(entry_is_binary(rev->repo, &p->parent[i].oid, p->parent[i].mode, p->parent[i].path) ? 'y' : 'n');
+			printf("%c ", entry_is_binary(rev->repo, &p->oid, p->mode, p->path) ? 'y' : 'n');
+		}
 	}
 
 	if (opt->output_format & (DIFF_FORMAT_RAW | DIFF_FORMAT_NAME_STATUS)) {
