@@ -5457,6 +5457,23 @@ static int diff_opt_follow(const struct option *opt,
 	return 0;
 }
 
+static int diff_opt_follow_merges(const struct option *opt,
+				  const char *arg, int unset)
+{
+	struct diff_options *options = opt->value;
+
+	BUG_ON_OPT_ARG(arg);
+	if (unset) {
+		options->flags.follow_renames = 0;
+		options->flags.follow_renames_merges = 0;
+		options->flags.default_follow_renames = 0;
+	} else {
+		options->flags.follow_renames = 1;
+		options->flags.follow_renames_merges = 1;
+	}
+	return 0;
+}
+
 static int diff_opt_ignore_submodules(const struct option *opt,
 				      const char *arg, int unset)
 {
@@ -5870,6 +5887,9 @@ struct option *add_diff_options(const struct option *opts,
 		OPT_CALLBACK_F(0, "follow", options, NULL,
 			       N_("continue listing the history of a file beyond renames"),
 			       PARSE_OPT_NOARG, diff_opt_follow),
+		OPT_CALLBACK_F(0, "follow-merges", options, NULL,
+			       N_("continue listing the history of a file beyond renames"),
+			       PARSE_OPT_NOARG, diff_opt_follow_merges),
 		OPT_INTEGER('l', NULL, &options->rename_limit,
 			    N_("prevent rename/copy detection if the number of rename/copy targets exceeds given limit")),
 

@@ -154,6 +154,7 @@ struct diff_flags {
 	unsigned find_copies_harder;
 
 	unsigned follow_renames;
+	unsigned follow_renames_merges;
 	unsigned rename_empty;
 
 	/* Internal; used for optimization to see if there is any change. */

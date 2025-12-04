@@ -821,7 +821,7 @@ void show_log(struct rev_info *opt)
 			show_parents(commit, abbrev_commit, opt->diffopt.file);
 		if (opt->children.name)
 			show_children(opt, commit, abbrev_commit);
-		if (parent)
+		if (parent && !opt->diffopt.flags.follow_renames_merges)
 			fprintf(opt->diffopt.file, " (from %s)",
 			       repo_find_unique_abbrev(the_repository, &parent->object.oid, abbrev_commit));
 		fputs(diff_get_color_opt(&opt->diffopt, DIFF_RESET), opt->diffopt.file);
@@ -1125,6 +1125,9 @@ static int log_tree_diff(struct rev_info *opt, struct commit *commit, struct log
 	if (is_merge) {
 		int octopus = (parents->next->next != NULL);
 
+		if (opt->diffopt.flags.follow_renames_merges)
+			opt->separate_merges = 1;
+
 		if (opt->remerge_diff) {
 			if (octopus) {
 				show_log(opt);
@@ -1153,6 +1156,8 @@ static int log_tree_diff(struct rev_info *opt, struct commit *commit, struct log
 		parse_commit_or_die(parent);
 		diff_tree_oid(get_commit_tree_oid(parent),
 			      oid, "", &opt->diffopt);
+		if (opt->diffopt.flags.follow_renames_merges && showed_log)
+			opt->loginfo = NULL;
 		log_tree_diff_flush(opt);
 
 		showed_log |= !opt->loginfo;
