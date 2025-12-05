@@ -1125,9 +1125,6 @@ static int log_tree_diff(struct rev_info *opt, struct commit *commit, struct log
 	if (is_merge) {
 		int octopus = (parents->next->next != NULL);
 
-		if (opt->diffopt.flags.follow_renames_merges)
-			opt->separate_merges = 1;
-
 		if (opt->remerge_diff) {
 			if (octopus) {
 				show_log(opt);
@@ -1140,7 +1137,7 @@ static int log_tree_diff(struct rev_info *opt, struct commit *commit, struct log
 		}
 		if (opt->combine_merges)
 			return do_diff_combined(opt, commit);
-		if (opt->separate_merges) {
+		if (opt->separate_merges || opt->diffopt.flags.follow_renames_merges) {
 			if (!opt->first_parent_merges) {
 				/* Show parent info for multiple diffs */
 				log->parent = parents->item;
@@ -1149,6 +1146,9 @@ static int log_tree_diff(struct rev_info *opt, struct commit *commit, struct log
 			return 0;
 	}
 
+	/* if (opt->diffopt.flags.follow_renames_merges) */
+	/* 	opt->diffopt.output_format = DIFF_FORMAT_NO_OUTPUT; */
+
 	showed_log = 0;
 	for (;;) {
 		struct commit *parent = parents->item;
@@ -1156,8 +1156,9 @@ static int log_tree_diff(struct rev_info *opt, struct commit *commit, struct log
 		parse_commit_or_die(parent);
 		diff_tree_oid(get_commit_tree_oid(parent),
 			      oid, "", &opt->diffopt);
-		if (opt->diffopt.flags.follow_renames_merges && showed_log)
+		if (opt->diffopt.flags.follow_renames_merges && showed_log) {
 			opt->loginfo = NULL;
+		}
 		log_tree_diff_flush(opt);
 
 		showed_log |= !opt->loginfo;
