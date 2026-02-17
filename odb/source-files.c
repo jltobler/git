@@ -65,7 +65,7 @@ static int odb_source_files_read_object_stream(struct odb_read_stream **out,
 					       const struct object_id *oid)
 {
 	struct odb_source_files *files = odb_source_files_downcast(source);
-	if (!packfile_store_read_object_stream(out, files->packed, oid) ||
+	if (!odb_source_read_object_stream(out, &files->packed->base, oid) ||
 	    !odb_source_loose_read_object_stream(out, source, oid))
 		return 0;
 	return -1;
