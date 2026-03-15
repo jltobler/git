@@ -1,0 +1,23 @@
+git-series(1)
+=============
+
+NAME
+----
+git-series - Manages lifecycle of a patch series
+
+SYNOPSIS
+--------
+[synopsis]
+git series
+
+DESCRIPTION
+-----------
+Manages lifecycle of a patch series.
+
+THIS COMMAND IS EXPERIMENTAL. THE BEHAVIOR MAY CHANGE.
+
+COMMANDS
+--------
+
+SEE ALSO
+--------

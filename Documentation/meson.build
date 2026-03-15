@@ -129,6 +129,7 @@ manpages = {
   'git-rm.adoc' : 1,
   'git-send-email.adoc' : 1,
   'git-send-pack.adoc' : 1,
+  'git-series.adoc' : 1,
   'git-shell.adoc' : 1,
   'git-sh-i18n--envsubst.adoc' : 1,
   'git-sh-i18n.adoc' : 1,

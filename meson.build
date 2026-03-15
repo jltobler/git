@@ -666,6 +666,7 @@ builtin_sources = [
   'builtin/revert.c',
   'builtin/rm.c',
   'builtin/send-pack.c',
+  'builtin/series.c',
   'builtin/shortlog.c',
   'builtin/show-branch.c',
   'builtin/show-index.c',

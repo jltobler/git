@@ -177,6 +177,7 @@ git-revert                              mainporcelain
 git-rm                                  mainporcelain           worktree
 git-send-email                          foreignscminterface             complete
 git-send-pack                           synchingrepositories
+git-series                              mainporcelain           history
 git-sh-i18n                             purehelpers
 git-sh-setup                            purehelpers
 git-shell                               synchelpers
