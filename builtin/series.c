@@ -7,6 +7,7 @@
 
 static const char *const series_usage[] = {
 	"git series create <series-name>",
+	"git series list",
 	NULL
 };
 
@@ -77,12 +78,44 @@ static int cmd_series_create(int argc, const char **argv, const char *prefix,
 	return 0;
 }
 
+static int print_series(const struct reference *ref, void *cb_data UNUSED)
+{
+	size_t name_len;
+
+	if (strip_suffix(ref->name, "/base", &name_len))
+		printf("%.*s\n", (int)name_len, ref->name);
+
+	return 0;
+}
+
+static int cmd_series_list(int argc, const char **argv, const char *prefix,
+			   struct repository *repo)
+{
+	struct refs_for_each_ref_options opts = {
+		.prefix = "refs/series/",
+		.trim_prefix = strlen("refs/series/"),
+		.pattern = "*/base",
+	};
+	struct option options[] = {
+		OPT_END()
+	};
+
+	argc = parse_options(argc, argv, prefix, options, series_usage, 0);
+	if (argc)
+		usage(_("too many arguments"));
+
+	refs_for_each_ref_ext(get_main_ref_store(repo), print_series, NULL, &opts);
+
+	return 0;
+}
+
 int cmd_series(int argc, const char **argv, const char *prefix,
 	       struct repository *repo)
 {
 	parse_opt_subcommand_fn *fn = NULL;
 	struct option options[] = {
 		OPT_SUBCOMMAND("create", &fn, cmd_series_create),
+		OPT_SUBCOMMAND("list", &fn, cmd_series_list),
 		OPT_END()
 	};
 
