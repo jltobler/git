@@ -12,6 +12,7 @@ static const char *const series_usage[] = {
 	"git series create <series-name>",
 	"git series list",
 	"git series log",
+	"git series tag",
 	NULL
 };
 
@@ -182,6 +183,82 @@ static int cmd_series_log(int argc, const char **argv, const char *prefix,
 	return 0;
 }
 
+static int get_latest_version(struct repository *repo, const char *series)
+{
+	struct strbuf latest_ref = STRBUF_INIT;
+	struct strbuf referent = STRBUF_INIT;
+	struct strbuf prefix = STRBUF_INIT;
+	const char *version = NULL;
+	int ret;
+
+	strbuf_addf(&latest_ref, "refs/series/%s/LATEST", series);
+
+	if (!refs_ref_exists(get_main_ref_store(repo), latest_ref.buf)) {
+		strbuf_release(&latest_ref);
+		return 0;
+	}
+
+	ret = refs_read_symbolic_ref(get_main_ref_store(repo), latest_ref.buf, &referent);
+	if (ret == NOT_A_SYMREF)
+		die(_("invalid LATEST reference for series"));
+
+	strbuf_addf(&prefix, "refs/series/%s/tags/v", series);
+	if (!skip_prefix(referent.buf, prefix.buf, &version))
+		die(_("invalid LATEST reference for series"));
+
+	strbuf_release(&latest_ref);
+
+	return atoi(version);
+}
+
+static int cmd_series_tag(int argc, const char **argv, const char *prefix,
+			  struct repository *repo)
+{
+	struct ref_transaction *transaction;
+	struct strbuf latest = STRBUF_INIT;
+	struct strbuf suffix = STRBUF_INIT;
+	struct strbuf tag = STRBUF_INIT;
+	struct strbuf err = STRBUF_INIT;
+	struct object_id oid;
+	const char *series;
+	int version;
+	struct option options[] = {
+		OPT_END()
+	};
+	argc = parse_options(argc, argv, prefix, options, series_usage, 0);
+	if (argc)
+		usage(_("too many arguments"));
+
+	series = get_current_series(repo);
+	if (!series)
+		die(_("series not started"));
+
+	version = get_latest_version(repo, series);
+	version++;
+
+	transaction = ref_store_transaction_begin(get_main_ref_store(repo), 0,
+						  &err);
+
+	repo_get_oid(repo, "HEAD", &oid);
+
+	strbuf_addf(&suffix, "tags/v%d", version);
+	create_series_ref(transaction, series, suffix.buf, &oid, NULL);
+
+	if (ref_transaction_commit(transaction, &err))
+		die("%s", err.buf);
+
+	strbuf_addf(&latest, "refs/series/%s/LATEST", series);
+	strbuf_addf(&tag, "refs/series/%s/tags/v%d", series, version);
+	refs_update_symref(get_main_ref_store(repo), latest.buf, tag.buf, "series tag");
+
+	strbuf_release(&latest);
+	strbuf_release(&suffix);
+	strbuf_release(&tag);
+	strbuf_release(&err);
+
+	return 0;
+}
+
 int cmd_series(int argc, const char **argv, const char *prefix,
 	       struct repository *repo)
 {
@@ -190,6 +267,7 @@ int cmd_series(int argc, const char **argv, const char *prefix,
 		OPT_SUBCOMMAND("create", &fn, cmd_series_create),
 		OPT_SUBCOMMAND("list", &fn, cmd_series_list),
 		OPT_SUBCOMMAND("log", &fn, cmd_series_log),
+		OPT_SUBCOMMAND("tag", &fn, cmd_series_tag),
 		OPT_END()
 	};
 
