@@ -1274,8 +1274,30 @@ static void read_desc_file(struct strbuf *buf, const char *desc_file)
 			  desc_file);
 }
 
+static void read_desc_obj(struct strbuf *buf, const char *desc_obj)
+{
+	struct object_id oid;
+	struct object *obj;
+
+	if (repo_get_oid(the_repository, desc_obj, &oid))
+		die(_("invalid revision for description object"));
+
+	obj = parse_object_or_die(the_repository, &oid, oid_to_hex(&oid));
+
+	switch (obj->type) {
+	case OBJ_TAG:
+		parse_tag()
+		break;
+	case OBJ_COMMIT:
+		break;
+	default:
+		die(_("description object is not tag or commit"));
+	}
+}
+
 static void prepare_cover_text(struct pretty_print_context *pp,
 			       const char *description_file,
+			       const char *description_object,
 			       const char *branch_name,
 			       struct strbuf *sb,
 			       const char *encoding,
@@ -1292,6 +1314,8 @@ static void prepare_cover_text(struct pretty_print_context *pp,
 
 	if (description_file && *description_file)
 		read_desc_file(&description_sb, description_file);
+	else if (description_object && *description_object)
+		read_desc_obj(&description_sb, description_object);
 	else if (branch_name && *branch_name)
 		read_branch_desc(&description_sb, branch_name);
 	if (!description_sb.len)
@@ -1339,6 +1363,7 @@ static void make_cover_letter(struct rev_info *rev, int use_separate_file,
 			      struct commit *origin,
 			      int nr, struct commit **list,
 			      const char *description_file,
+			      const char *description_object,
 			      const char *branch_name,
 			      int quiet,
 			      const struct format_config *cfg)
@@ -1380,7 +1405,7 @@ static void make_cover_letter(struct rev_info *rev, int use_separate_file,
 	pp.rev = rev;
 	pp.encode_email_headers = rev->encode_email_headers;
 	pp_user_info(&pp, NULL, &sb, from, encoding);
-	prepare_cover_text(&pp, description_file, branch_name, &sb,
+	prepare_cover_text(&pp, description_file, description_object, branch_name, &sb,
 			   encoding, need_8bit_cte, cfg);
 	fprintf(rev->diffopt.file, "%s\n", sb.buf);
 
@@ -1929,6 +1954,7 @@ int cmd_format_patch(int argc,
 	const char *reroll_count = NULL;
 	char *cover_from_description_arg = NULL;
 	char *description_file = NULL;
+	char *description_object = NULL;
 	char *branch_name = NULL;
 	struct base_tree_info bases;
 	struct commit *base;
@@ -1981,6 +2007,8 @@ int cmd_format_patch(int argc,
 			    N_("generate parts of a cover letter based on a branch's description")),
 		OPT_FILENAME(0, "description-file", &description_file,
 			     N_("use branch description from file")),
+		OPT_FILENAME(0, "description-object", &description_object,
+			     N_("use branch description from tag or commit object")),
 		OPT_CALLBACK_F(0, "subject-prefix", &cfg, N_("prefix"),
 			    N_("use [<prefix>] instead of [PATCH]"),
 			    PARSE_OPT_NONEG, subject_prefix_callback),
@@ -2158,6 +2186,10 @@ int cmd_format_patch(int argc,
 	if (cfg.keep_subject && cfg.subject_prefix)
 		die(_("options '%s' and '%s' cannot be used together"), "--subject-prefix/--rfc", "-k");
 	rev.preserve_subject = cfg.keep_subject;
+
+	if (description_file && description_object)
+		die(_("options '%s' and '%s' cannot be used together"),
+		    "--description_file", "--description_object");
 
 	argc = setup_revisions(argc, argv, &rev, &s_r_opt);
 	if (argc > 1)
@@ -2391,7 +2423,7 @@ int cmd_format_patch(int argc,
 			gen_message_id(&rev, "cover");
 		make_cover_letter(&rev, !!output_directory,
 				  origin, list.nr, list.items,
-				  description_file, branch_name, quiet, &cfg);
+				  description_file, description_object, branch_name, quiet, &cfg);
 		print_bases(&bases, rev.diffopt.file);
 		print_signature(signature, rev.diffopt.file);
 		total++;
@@ -2490,6 +2522,7 @@ done:
 	strbuf_release(&rdiff2);
 	strbuf_release(&rdiff_title);
 	free(description_file);
+	free(description_object);
 	free(signature_file_arg);
 	free(signature_to_free);
 	free(branch_name);

@@ -219,6 +219,10 @@ populated with placeholder text.
 	Use the contents of <file> instead of the branch's description
 	for generating the cover letter.
 
+--description-object=<rev>::
+	Use the tag or commit message specified by <rev> instead of the branch's
+	description for generating the cover letter.
+
 --subject-prefix=<subject-prefix>::
 	Instead of the standard '[PATCH]' prefix in the subject
 	line, instead use '[<subject-prefix>]'. This can be used
