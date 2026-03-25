@@ -1048,7 +1048,8 @@ int cmd_fsck(int argc,
 	} else {
 		odb_prepare_alternates(repo->objects);
 		for (source = repo->objects->sources; source; source = source->next)
-			fsck_source(repo, source);
+			if (check_full || source->local)
+				fsck_source(repo, source);
 
 		if (check_full) {
 			struct packed_git *p;
