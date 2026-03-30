@@ -14,6 +14,7 @@
 #include "commit.h"
 #include "delta.h"
 #include "pack.h"
+#include "parse-options.h"
 #include "path.h"
 #include "read-cache-ll.h"
 #include "refs.h"
@@ -3906,6 +3907,8 @@ static void parse_argv(void)
 {
 	unsigned int i;
 
+	parse_options(global_argc, global_argv, global_prefix, NULL, NULL, 0);
+
 	for (i = 1; i < global_argc; i++) {
 		const char *a = global_argv[i];
 
@@ -3936,6 +3939,152 @@ static void parse_argv(void)
 		read_marks();
 	build_mark_map(&sub_marks_from, &sub_marks_to);
 }
+
+static int parse_opt_max_pack_size(const struct option *opt UNUSED,
+				   const char *arg, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_max_pack_size(arg);
+	return 0;
+}
+
+static int parse_opt_big_file_threshold(const struct option *opt UNUSED,
+					const char *arg, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_big_file_threshold(arg);
+	return 0;
+}
+
+static int parse_opt_depth(const struct option *opt UNUSED, const char *arg,
+			   int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_depth(arg);
+	return 0;
+}
+
+static int parse_opt_active_branches(const struct option *opt UNUSED,
+				     const char *arg, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_active_branches(arg);
+	return 0;
+}
+
+static int parse_opt_export_pack_edges(const struct option *opt UNUSED,
+				       const char *arg, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_export_pack_edges(arg);
+	return 0;
+}
+
+static int parse_opt_signed_commits(const struct option *opt UNUSED,
+				    const char *arg, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_signed_commits(arg);
+	return 0;
+}
+
+static int parse_opt_signed_tags(const struct option *opt UNUSED,
+				 const char *arg, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_signed_tags(arg);
+	return 0;
+}
+
+static int parse_opt_quiet(const struct option *opt UNUSED,
+			   const char *arg UNUSED, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	show_stats = 0;
+	quiet = 1;
+	return 0;
+}
+
+static int parse_opt_date_format(const struct option *opt UNUSED,
+				 const char *arg, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_date_format(arg);
+	return 0;
+}
+
+static int parse_opt_import_marks(const struct option *opt UNUSED,
+				  const char *arg, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_import_marks(arg, 0, 0);
+	return 0;
+}
+
+static int parse_opt_import_marks_if_exists(const struct option *opt UNUSED,
+					     const char *arg, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_import_marks(arg, 0, 1);
+	return 0;
+}
+
+static int parse_opt_export_marks(const struct option *opt UNUSED,
+				  const char *arg, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_export_marks(arg);
+	return 0;
+}
+
+static int parse_opt_rewrite_submodules(const struct option *opt,
+					const char *arg, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_rewrite_submodules(arg, opt->value);
+	return 0;
+}
+
+static int parse_opt_cat_blob_fd(const struct option *opt UNUSED,
+				 const char *arg, int unset)
+{
+	BUG_ON_OPT_NEG(unset);
+	option_cat_blob_fd(arg);
+	return 0;
+}
+
+struct option options[] = {
+	OPT_CALLBACK_F(0, "max-pack-size", NULL, N_("n"),
+		       N_("maximum size of each packfile"), PARSE_OPT_NONEG, parse_opt_max_pack_size),
+	OPT_CALLBACK_F(0, "big-file-threshold", NULL, N_("n"),
+		       N_("threshold for blob to be treated as large"), PARSE_OPT_NONEG, parse_opt_big_file_threshold),
+	OPT_CALLBACK_F(0, "depth", NULL, N_("n"), N_(""), PARSE_OPT_NONEG, parse_opt_depth),
+	OPT_CALLBACK_F(0, "active-branches", NULL, N_("n"), N_(""), PARSE_OPT_NONEG, parse_opt_active_branches),
+	OPT_CALLBACK_F(0, "export-pack-edges", NULL, N_("file"),
+		       N_("output a list of packfile boundaries"), PARSE_OPT_NONEG, parse_opt_export_pack_edges),
+	OPT_CALLBACK_F(0, "signed-commits", NULL, N_("mode"),
+		       N_("select handling of signed commits"), PARSE_OPT_NONEG, parse_opt_signed_commits),
+	OPT_CALLBACK_F(0, "signed-tags", NULL, N_("mode"),
+		       N_("select handling of signed tags"), PARSE_OPT_NONEG, parse_opt_signed_tags),
+	OPT_CALLBACK_F(0, "quiet", NULL, NULL, N_("suppress statistics output"), PARSE_OPT_NONEG, parse_opt_quiet),
+	OPT_BOOL_F(0, "stats", &show_stats, N_("WIP"), PARSE_OPT_NONEG),
+	OPT_BOOL_F(0, "allow-unsafe-features", &allow_unsafe_features,
+		   N_("allow potentially unsafe features in import"), PARSE_OPT_NONEG),
+	OPT_CALLBACK_F(0, "date-format", NULL, N_("fmt"), N_("WIP"), PARSE_OPT_NONEG, parse_opt_date_format),
+	OPT_CALLBACK_F(0, "import-marks", NULL, N_("file"),
+		       N_("import marks from this file"), PARSE_OPT_NONEG, parse_opt_import_marks),
+	OPT_CALLBACK_F(0, "import-marks-if-exists", NULL, N_("file"),
+		       N_("import marks from this file if it exists"), PARSE_OPT_NONEG, parse_opt_import_marks_if_exists),
+	OPT_CALLBACK_F(0, "export-marks", NULL, N_("file"),
+		       N_("export marks to this file"), PARSE_OPT_NONEG, parse_opt_export_marks),
+	OPT_CALLBACK_F(0, "rewrite-submodules-to", &sub_marks_to, N_("<name>:<file>"), N_(""), PARSE_OPT_NONEG, parse_opt_rewrite_submodules),
+	OPT_CALLBACK_F(0, "rewrite-submodules-from", &sub_marks_from, N_("<name>:<file>"), N_(""), PARSE_OPT_NONEG, parse_opt_rewrite_submodules),
+	OPT_BOOL(0, "relative-marks", &relative_marks_paths, N_("paths relative to the local repository")),
+	OPT_BOOL(0, "done", &require_explicit_termination, N_("WIP")),
+	OPT_BOOL(0, "force", &force_update, N_("WIP")),
+	OPT_CALLBACK_F(0, "cat-blob-fd", NULL, N_("fd"), N_("WIP"), PARSE_OPT_NONEG, parse_opt_cat_blob_fd),
+	OPT_END()
+};
 
 int cmd_fast_import(int argc,
 		    const char **argv,
