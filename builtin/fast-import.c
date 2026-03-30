@@ -14,6 +14,7 @@
 #include "commit.h"
 #include "delta.h"
 #include "pack.h"
+#include "parse-options.h"
 #include "path.h"
 #include "read-cache-ll.h"
 #include "refs.h"
@@ -3871,6 +3872,10 @@ int cmd_fast_import(int argc,
 		    struct repository *repo)
 {
 	unsigned int i;
+	struct option options[] = {
+		OPT_BOOL(0, "relative-marks", &relative_marks_paths, N_("foobar")),
+		OPT_END()
+	};
 
 	show_usage_if_asked(argc, argv, fast_import_usage);
 
