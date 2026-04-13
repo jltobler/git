@@ -9,9 +9,9 @@
 #include "odb/streaming.h"
 #include "packfile.h"
 
-int find_pack_entry(struct odb_source_packed *store,
-		    const struct object_id *oid,
-		    struct pack_entry *e)
+static int find_pack_entry(struct odb_source_packed *store,
+			   const struct object_id *oid,
+			   struct pack_entry *e)
 {
 	struct packfile_list_entry *l;
 
@@ -450,6 +450,25 @@ static int odb_source_packed_find_abbrev_len(struct odb_source *source,
 	return 0;
 }
 
+static int odb_source_packed_freshen_object(struct odb_source *source,
+					    const struct object_id *oid)
+{
+	struct odb_source_packed *packed = odb_source_packed_downcast(source);
+	struct pack_entry e;
+
+	if (!find_pack_entry(packed, oid, &e))
+		return 0;
+	if (e.p->is_cruft)
+		return 0;
+	if (e.p->freshened)
+		return 1;
+	if (utime(e.p->pack_name, NULL))
+		return 0;
+	e.p->freshened = 1;
+
+	return 1;
+}
+
 void (*report_garbage)(unsigned seen_bits, const char *path);
 
 static void report_helper(const struct string_list *list,
@@ -662,6 +681,7 @@ struct odb_source_packed *odb_source_packed_new(struct odb_source_files *parent)
 	packed->base.read_object_stream = odb_source_packed_read_object_stream;
 	packed->base.for_each_object = odb_source_packed_for_each_object;
 	packed->base.find_abbrev_len = odb_source_packed_find_abbrev_len;
+	packed->base.freshen_object = odb_source_packed_freshen_object;
 
 	if (!is_absolute_path(parent->base.path))
 		chdir_notify_register(NULL, odb_source_packed_reparent, packed);
