@@ -956,7 +956,7 @@ int packfile_store_count_objects(struct odb_source_packed *store,
 	unsigned long count = 0;
 	int ret;
 
-	m = get_multi_pack_index(&store->files->base);
+	m = get_multi_pack_index(store);
 	if (m)
 		count += m->num_objects + m->num_objects_in_base;
 

@@ -16,9 +16,9 @@
 #define MIDX_PACK_ERROR ((void *)(intptr_t)-1)
 
 int midx_checksum_valid(struct multi_pack_index *m);
-void clear_midx_files_ext(struct odb_source *source, const char *ext,
+void clear_midx_files_ext(struct odb_source_packed *source, const char *ext,
 			  const char *keep_hash);
-void clear_incremental_midx_files_ext(struct odb_source *source, const char *ext,
+void clear_incremental_midx_files_ext(struct odb_source_packed *source, const char *ext,
 				      char **keep_hashes,
 				      uint32_t hashes_nr);
 int cmp_idx_or_pack_name(const char *idx_or_pack_name,
@@ -27,25 +27,25 @@ int cmp_idx_or_pack_name(const char *idx_or_pack_name,
 const char *midx_get_checksum_hex(const struct multi_pack_index *m)
 {
 	return hash_to_hex_algop(midx_get_checksum_hash(m),
-				 m->source->odb->repo->hash_algo);
+				 m->source->base.odb->repo->hash_algo);
 }
 
 const unsigned char *midx_get_checksum_hash(const struct multi_pack_index *m)
 {
-	return m->data + m->data_len - m->source->odb->repo->hash_algo->rawsz;
+	return m->data + m->data_len - m->source->base.odb->repo->hash_algo->rawsz;
 }
 
-void get_midx_filename(struct odb_source *source, struct strbuf *out)
+void get_midx_filename(struct odb_source_packed *source, struct strbuf *out)
 {
 	get_midx_filename_ext(source, out, NULL, NULL);
 }
 
-void get_midx_filename_ext(struct odb_source *source, struct strbuf *out,
+void get_midx_filename_ext(struct odb_source_packed *source, struct strbuf *out,
 			   const unsigned char *hash, const char *ext)
 {
-	strbuf_addf(out, "%s/pack/multi-pack-index", source->path);
+	strbuf_addf(out, "%s/pack/multi-pack-index", source->base.path);
 	if (ext)
-		strbuf_addf(out, "-%s.%s", hash_to_hex_algop(hash, source->odb->repo->hash_algo), ext);
+		strbuf_addf(out, "-%s.%s", hash_to_hex_algop(hash, source->base.odb->repo->hash_algo), ext);
 }
 
 static int midx_read_oid_fanout(const unsigned char *chunk_start,
@@ -99,17 +99,16 @@ static int midx_read_object_offsets(const unsigned char *chunk_start,
 	return 0;
 }
 
-struct multi_pack_index *get_multi_pack_index(struct odb_source *source)
+struct multi_pack_index *get_multi_pack_index(struct odb_source_packed *source)
 {
-	struct odb_source_files *files = odb_source_files_downcast(source);
-	odb_source_packed_prepare(files->packed);
-	return files->packed->midx;
+	odb_source_packed_prepare(source);
+	return source->midx;
 }
 
-static struct multi_pack_index *load_multi_pack_index_one(struct odb_source *source,
+static struct multi_pack_index *load_multi_pack_index_one(struct odb_source_packed *source,
 							  const char *midx_name)
 {
-	struct repository *r = source->odb->repo;
+	struct repository *r = source->base.odb->repo;
 	struct multi_pack_index *m = NULL;
 	int fd;
 	struct stat st;
@@ -234,23 +233,23 @@ cleanup_fail:
 	return NULL;
 }
 
-void get_midx_chain_dirname(struct odb_source *source, struct strbuf *buf)
+void get_midx_chain_dirname(struct odb_source_packed *source, struct strbuf *buf)
 {
-	strbuf_addf(buf, "%s/pack/multi-pack-index.d", source->path);
+	strbuf_addf(buf, "%s/pack/multi-pack-index.d", source->base.path);
 }
 
-void get_midx_chain_filename(struct odb_source *source, struct strbuf *buf)
+void get_midx_chain_filename(struct odb_source_packed *source, struct strbuf *buf)
 {
 	get_midx_chain_dirname(source, buf);
 	strbuf_addstr(buf, "/multi-pack-index-chain");
 }
 
-void get_split_midx_filename_ext(struct odb_source *source, struct strbuf *buf,
+void get_split_midx_filename_ext(struct odb_source_packed *source, struct strbuf *buf,
 				 const unsigned char *hash, const char *ext)
 {
 	get_midx_chain_dirname(source, buf);
 	strbuf_addf(buf, "/multi-pack-index-%s.%s",
-		    hash_to_hex_algop(hash, source->odb->repo->hash_algo), ext);
+		    hash_to_hex_algop(hash, source->base.odb->repo->hash_algo), ext);
 }
 
 static int open_multi_pack_index_chain(const struct git_hash_algo *hash_algo,
@@ -306,11 +305,11 @@ static int add_midx_to_chain(struct multi_pack_index *midx,
 	return 1;
 }
 
-static struct multi_pack_index *load_midx_chain_fd_st(struct odb_source *source,
+static struct multi_pack_index *load_midx_chain_fd_st(struct odb_source_packed *source,
 						      int fd, struct stat *st,
 						      int *incomplete_chain)
 {
-	const struct git_hash_algo *hash_algo = source->odb->repo->hash_algo;
+	const struct git_hash_algo *hash_algo = source->base.odb->repo->hash_algo;
 	struct multi_pack_index *midx_chain = NULL;
 	struct strbuf buf = STRBUF_INIT;
 	int valid = 1;
@@ -362,7 +361,7 @@ static struct multi_pack_index *load_midx_chain_fd_st(struct odb_source *source,
 	return midx_chain;
 }
 
-static struct multi_pack_index *load_multi_pack_index_chain(struct odb_source *source)
+static struct multi_pack_index *load_multi_pack_index_chain(struct odb_source_packed *source)
 {
 	struct strbuf chain_file = STRBUF_INIT;
 	struct stat st;
@@ -370,7 +369,8 @@ static struct multi_pack_index *load_multi_pack_index_chain(struct odb_source *s
 	struct multi_pack_index *m = NULL;
 
 	get_midx_chain_filename(source, &chain_file);
-	if (open_multi_pack_index_chain(source->odb->repo->hash_algo, chain_file.buf, &fd, &st)) {
+	if (open_multi_pack_index_chain(source->base.odb->repo->hash_algo,
+					chain_file.buf, &fd, &st)) {
 		int incomplete;
 		/* ownership of fd is taken over by load function */
 		m = load_midx_chain_fd_st(source, fd, &st, &incomplete);
@@ -380,7 +380,7 @@ static struct multi_pack_index *load_multi_pack_index_chain(struct odb_source *s
 	return m;
 }
 
-struct multi_pack_index *load_multi_pack_index(struct odb_source *source)
+struct multi_pack_index *load_multi_pack_index(struct odb_source_packed *source)
 {
 	struct strbuf midx_name = STRBUF_INIT;
 	struct multi_pack_index *m;
@@ -456,7 +456,6 @@ static uint32_t midx_for_pack(struct multi_pack_index **_m,
 int prepare_midx_pack(struct multi_pack_index *m,
 		      uint32_t pack_int_id)
 {
-	struct odb_source_files *files = odb_source_files_downcast(m->source);
 	struct strbuf pack_name = STRBUF_INIT;
 	struct packed_git *p;
 
@@ -467,10 +466,10 @@ int prepare_midx_pack(struct multi_pack_index *m,
 	if (m->packs[pack_int_id])
 		return 0;
 
-	strbuf_addf(&pack_name, "%s/pack/%s", files->base.path,
+	strbuf_addf(&pack_name, "%s/pack/%s", m->source->base.path,
 		    m->pack_names[pack_int_id]);
-	p = packfile_store_load_pack(files->packed,
-				     pack_name.buf, files->base.local);
+	p = packfile_store_load_pack(m->source,
+				     pack_name.buf, m->source->base.local);
 	strbuf_release(&pack_name);
 
 	if (!p) {
@@ -523,7 +522,7 @@ int bsearch_one_midx(const struct object_id *oid, struct multi_pack_index *m,
 {
 	int ret = bsearch_hash(oid->hash, m->chunk_oid_fanout,
 			       m->chunk_oid_lookup,
-			       m->source->odb->repo->hash_algo->rawsz,
+			       m->source->base.odb->repo->hash_algo->rawsz,
 			       result);
 	if (result)
 		*result += m->num_objects_in_base;
@@ -554,7 +553,7 @@ struct object_id *nth_midxed_object_oid(struct object_id *oid,
 	n = midx_for_object(&m, n);
 
 	oidread(oid, m->chunk_oid_lookup + st_mult(m->hash_len, n),
-		m->source->odb->repo->hash_algo);
+		m->source->base.odb->repo->hash_algo);
 	return oid;
 }
 
@@ -734,26 +733,25 @@ int midx_preferred_pack(struct multi_pack_index *m, uint32_t *pack_int_id)
 	return 0;
 }
 
-int prepare_multi_pack_index_one(struct odb_source *source)
+int prepare_multi_pack_index_one(struct odb_source_packed *source)
 {
-	struct odb_source_files *files = odb_source_files_downcast(source);
-	struct repository *r = source->odb->repo;
+	struct repository *r = source->base.odb->repo;
 
 	prepare_repo_settings(r);
 	if (!r->settings.core_multi_pack_index)
 		return 0;
 
-	if (files->packed->midx)
+	if (source->midx)
 		return 1;
 
-	files->packed->midx = load_multi_pack_index(source);
+	source->midx = load_multi_pack_index(source);
 
-	return !!files->packed->midx;
+	return !!source->midx;
 }
 
 int midx_checksum_valid(struct multi_pack_index *m)
 {
-	return hashfile_checksum_valid(m->source->odb->repo->hash_algo,
+	return hashfile_checksum_valid(m->source->base.odb->repo->hash_algo,
 				       m->data, m->data_len);
 }
 
@@ -780,7 +778,7 @@ static void clear_midx_file_ext(const char *full_path, size_t full_path_len UNUS
 		die_errno(_("failed to remove %s"), full_path);
 }
 
-void clear_midx_files_ext(struct odb_source *source, const char *ext,
+void clear_midx_files_ext(struct odb_source_packed *source, const char *ext,
 			  const char *keep_hash)
 {
 	struct clear_midx_data data;
@@ -794,7 +792,7 @@ void clear_midx_files_ext(struct odb_source *source, const char *ext,
 	}
 	data.ext = ext;
 
-	for_each_file_in_pack_dir(source->path,
+	for_each_file_in_pack_dir(source->base.path,
 				  clear_midx_file_ext,
 				  &data);
 
@@ -803,7 +801,7 @@ void clear_midx_files_ext(struct odb_source *source, const char *ext,
 	free(data.keep);
 }
 
-void clear_incremental_midx_files_ext(struct odb_source *source, const char *ext,
+void clear_incremental_midx_files_ext(struct odb_source_packed *source, const char *ext,
 				      char **keep_hashes,
 				      uint32_t hashes_nr)
 {
@@ -819,7 +817,7 @@ void clear_incremental_midx_files_ext(struct odb_source *source, const char *ext
 	data.keep_nr = hashes_nr;
 	data.ext = ext;
 
-	for_each_file_in_pack_subdir(source->path, "multi-pack-index.d",
+	for_each_file_in_pack_subdir(source->base.path, "multi-pack-index.d",
 				     clear_midx_file_ext, &data);
 
 	for (i = 0; i < hashes_nr; i++)
@@ -829,9 +827,10 @@ void clear_incremental_midx_files_ext(struct odb_source *source, const char *ext
 
 void clear_midx_file(struct repository *r)
 {
+	struct odb_source_files *files = odb_source_files_downcast(r->objects->sources);
 	struct strbuf midx = STRBUF_INIT;
 
-	get_midx_filename(r->objects->sources, &midx);
+	get_midx_filename(files->packed, &midx);
 
 	if (r->objects) {
 		struct odb_source *source;
@@ -847,8 +846,8 @@ void clear_midx_file(struct repository *r)
 	if (remove_path(midx.buf))
 		die(_("failed to clear multi-pack-index at %s"), midx.buf);
 
-	clear_midx_files_ext(r->objects->sources, MIDX_EXT_BITMAP, NULL);
-	clear_midx_files_ext(r->objects->sources, MIDX_EXT_REV, NULL);
+	clear_midx_files_ext(files->packed, MIDX_EXT_BITMAP, NULL);
+	clear_midx_files_ext(files->packed, MIDX_EXT_REV, NULL);
 
 	strbuf_release(&midx);
 }
@@ -892,9 +891,9 @@ static int compare_pair_pos_vs_id(const void *_a, const void *_b)
 			display_progress(progress, _n); \
 	} while (0)
 
-int verify_midx_file(struct odb_source *source, unsigned flags)
+int verify_midx_file(struct odb_source_packed *source, unsigned flags)
 {
-	struct repository *r = source->odb->repo;
+	struct repository *r = source->base.odb->repo;
 	struct pair_pos_vs_id *pairs = NULL;
 	uint32_t i;
 	struct progress *progress = NULL;
