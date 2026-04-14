@@ -9,6 +9,7 @@
 #include "odb/source-packed.h"
 #include "odb/streaming.h"
 #include "pack.h"
+#include "pack-bitmap.h"
 #include "pack-revindex.h"
 #include "packfile.h"
 #include "progress.h"
@@ -771,6 +772,9 @@ static int odb_source_packed_fsck(struct odb_source *source,
 	stop_progress(&progress);
 
 	if (verify_reverse_indices(packed, opts) < 0)
+		ret = -1;
+
+	if (verify_bitmap_files(packed))
 		ret = -1;
 
 	return ret;
