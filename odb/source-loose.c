@@ -664,6 +664,12 @@ static void odb_source_loose_free(struct odb_source *source)
 	free(loose);
 }
 
+static int odb_source_loose_fsck(struct odb_source *source UNUSED,
+				 struct odb_fsck_options *opts UNUSED)
+{
+	return 0;
+}
+
 struct odb_source_loose *odb_source_loose_new(struct object_database *odb,
 					      const char *path,
 					      bool local)
@@ -683,6 +689,7 @@ struct odb_source_loose *odb_source_loose_new(struct object_database *odb,
 	loose->base.count_objects = odb_source_loose_count_objects;
 	loose->base.freshen_object = odb_source_loose_freshen_object;
 	loose->base.write_object = odb_source_loose_write_object;
+	loose->base.fsck = odb_source_loose_fsck;
 
 	if (!is_absolute_path(loose->base.path))
 		chdir_notify_register(NULL, odb_source_loose_reparent, loose);

@@ -1,6 +1,7 @@
 #include "git-compat-util.h"
 #include "object-file.h"
 #include "odb.h"
+#include "fsck.h"
 #include "odb/source-inmemory.h"
 #include "odb/streaming.h"
 #include "oidtree.h"
@@ -357,6 +358,12 @@ static void odb_source_inmemory_free(struct odb_source *source)
 	free(inmemory);
 }
 
+static int odb_source_inmemory_fsck(struct odb_source *source UNUSED,
+				    struct odb_fsck_options *opts UNUSED)
+{
+	return 0;
+}
+
 struct odb_source_inmemory *odb_source_inmemory_new(struct object_database *odb)
 {
 	struct odb_source_inmemory *source;
@@ -378,6 +385,7 @@ struct odb_source_inmemory *odb_source_inmemory_new(struct object_database *odb)
 	source->base.begin_transaction = odb_source_inmemory_begin_transaction;
 	source->base.read_alternates = odb_source_inmemory_read_alternates;
 	source->base.write_alternate = odb_source_inmemory_write_alternate;
+	source->base.fsck = odb_source_inmemory_fsck;
 
 	return source;
 }

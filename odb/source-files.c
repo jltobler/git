@@ -258,6 +258,19 @@ out:
 	return ret;
 }
 
+static int odb_source_files_fsck(struct odb_source *source,
+				 struct odb_fsck_options *opts)
+{
+	struct odb_source_files *files = odb_source_files_downcast(source);
+	int ret = 0;
+
+	ret |= odb_source_fsck(&files->loose->base, opts);
+	if (opts->flags & ODB_FSCK_FULL)
+		ret |= odb_source_fsck(&files->packed->base, opts);
+
+	return ret;
+}
+
 struct odb_source_files *odb_source_files_new(struct object_database *odb,
 					      const char *path,
 					      bool local)
@@ -283,6 +296,7 @@ struct odb_source_files *odb_source_files_new(struct object_database *odb,
 	files->base.begin_transaction = odb_source_files_begin_transaction;
 	files->base.read_alternates = odb_source_files_read_alternates;
 	files->base.write_alternate = odb_source_files_write_alternate;
+	files->base.fsck = odb_source_files_fsck;
 
 	/*
 	 * Ideally, we would only ever store absolute paths in the source. This
