@@ -2,7 +2,6 @@
 #define ODB_TRANSACTION_H
 
 #include "odb.h"
-#include "odb/source.h"
 
 /*
  * A transaction may be started for an object database prior to writing new
@@ -34,12 +33,17 @@ struct odb_transaction {
 	const char **(*env)(struct odb_transaction *transaction);
 };
 
+enum odb_transaction_flags {
+	ODB_TRANSACTION_RECEIVE = (1 << 0),
+};
+
 /*
  * Starts an ODB transaction. Subsequent objects are written to the transaction
  * and not committed until odb_transaction_commit() is invoked on the
  * transaction. If the ODB already has a pending transaction, NULL is returned.
  */
-struct odb_transaction *odb_transaction_begin(struct object_database *odb);
+struct odb_transaction *odb_transaction_begin(struct object_database *odb,
+					      enum odb_transaction_flags flags);
 
 /*
  * Commits an ODB transaction making the written objects visible. If the

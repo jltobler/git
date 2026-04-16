@@ -182,9 +182,10 @@ static int odb_source_files_write_object_stream(struct odb_source *source,
 }
 
 static int odb_source_files_begin_transaction(struct odb_source *source,
-					      struct odb_transaction **out)
+					      struct odb_transaction **out,
+					      enum odb_transaction_flags flags)
 {
-	struct odb_transaction *tx = odb_transaction_files_begin(source);
+	struct odb_transaction *tx = odb_transaction_files_begin(source, flags);
 	if (!tx)
 		return -1;
 	*out = tx;

@@ -1333,7 +1333,7 @@ int index_fd(struct index_state *istate, struct object_id *oid,
 
 		if (flags & INDEX_WRITE_OBJECT) {
 			struct object_database *odb = the_repository->objects;
-			struct odb_transaction *transaction = odb_transaction_begin(odb);
+			struct odb_transaction *transaction = odb_transaction_begin(odb, 0);
 
 			ret = odb_transaction_write_object_stream(odb->transaction,
 								  &stream,
@@ -1641,7 +1641,8 @@ static const char **odb_transaction_files_env(struct odb_transaction *base)
 	return tmp_objdir_env(transaction->objdir);
 }
 
-struct odb_transaction *odb_transaction_files_begin(struct odb_source *source)
+struct odb_transaction *odb_transaction_files_begin(struct odb_source *source,
+						    enum odb_transaction_flags flags)
 {
 	struct odb_transaction_files *transaction;
 	struct object_database *odb = source->odb;
@@ -1655,6 +1656,11 @@ struct odb_transaction *odb_transaction_files_begin(struct odb_source *source)
 	transaction->base.write_object_stream = odb_transaction_files_write_object_stream;
 	transaction->base.env = odb_transaction_files_env;
 	transaction->prefix = "bulk-fsync";
+
+	if (flags & ODB_TRANSACTION_RECEIVE) {
+		transaction->prefix = "incoming";
+		odb_transaction_files_prepare(&transaction->base);
+	}
 
 	return &transaction->base;
 }
