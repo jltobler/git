@@ -497,6 +497,7 @@ struct odb_transaction_files {
 
 	struct tmp_objdir *objdir;
 	struct transaction_packfile packfile;
+	const char *prefix;
 };
 
 static void odb_transaction_files_prepare(struct odb_transaction *base)
@@ -1677,6 +1678,16 @@ static void odb_transaction_files_commit(struct odb_transaction *base)
 	flush_packfile_transaction(transaction);
 }
 
+static const char **odb_transaction_files_env(struct odb_transaction *base)
+{
+	struct odb_transaction_files *transaction =
+		container_of(base, struct odb_transaction_files, base);
+
+	odb_transaction_files_prepare(&transaction->base);
+
+	return tmp_objdir_env(transaction->objdir);
+}
+
 struct odb_transaction *odb_transaction_files_begin(struct odb_source *source)
 {
 	struct odb_transaction_files *transaction;
@@ -1689,6 +1700,7 @@ struct odb_transaction *odb_transaction_files_begin(struct odb_source *source)
 	transaction->base.source = source;
 	transaction->base.commit = odb_transaction_files_commit;
 	transaction->base.write_object_stream = odb_transaction_files_write_object_stream;
+	transaction->base.env = odb_transaction_files_env;
 	transaction->prefix = "bulk-fsync";
 
 	return &transaction->base;
