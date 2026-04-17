@@ -30,6 +30,8 @@ struct odb_transaction {
 	int (*write_object_stream)(struct odb_transaction *transaction,
 				   struct odb_write_stream *stream, size_t len,
 				   struct object_id *oid);
+
+	const char **(*env)(struct odb_transaction *transaction);
 };
 
 /*
@@ -53,5 +55,7 @@ void odb_transaction_commit(struct odb_transaction *transaction);
 int odb_transaction_write_object_stream(struct odb_transaction *transaction,
 					struct odb_write_stream *stream,
 					size_t len, struct object_id *oid);
+
+const char **odb_transaction_env(struct odb_transaction *transaction);
 
 #endif
