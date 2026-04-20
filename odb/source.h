@@ -205,7 +205,7 @@ struct odb_source {
 			    const void *buf, unsigned long len,
 			    enum object_type type,
 			    struct object_id *oid,
-			    struct object_id *compat_oid,
+			    const struct object_id *compat_oid,
 			    enum odb_write_object_flags flags);
 
 	/*
@@ -413,7 +413,7 @@ static inline int odb_source_write_object(struct odb_source *source,
 					  const void *buf, unsigned long len,
 					  enum object_type type,
 					  struct object_id *oid,
-					  struct object_id *compat_oid,
+					  const struct object_id *compat_oid,
 					  enum odb_write_object_flags flags)
 {
 	return source->write_object(source, buf, len, type, oid,
