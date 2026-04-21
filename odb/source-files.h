@@ -21,6 +21,10 @@ struct odb_source_files *odb_source_files_new(struct object_database *odb,
 					      const char *path,
 					      bool local);
 
+int odb_source_files_force_object_loose(struct odb_source *source,
+					const struct object_id *oid,
+					const time_t *mtime);
+
 /*
  * Cast the given object database source to the files backend. This will cause
  * a BUG in case the source doesn't use this backend.
