@@ -1,6 +1,8 @@
 #ifndef ODB_TRANSACTION_H
 #define ODB_TRANSACTION_H
 
+#include "git-compat-util.h"
+#include "gettext.h"
 #include "odb.h"
 
 /*
@@ -42,8 +44,17 @@ enum odb_transaction_flags {
  * and not committed until odb_transaction_commit() is invoked on the
  * transaction. If the ODB already has a pending transaction, NULL is returned.
  */
-struct odb_transaction *odb_transaction_begin(struct object_database *odb,
-					      enum odb_transaction_flags flags);
+int odb_transaction_begin(struct object_database *odb,
+			  struct odb_transaction **out,
+			  enum odb_transaction_flags flags);
+
+static inline void odb_transaction_begin_or_die(struct object_database *odb,
+						struct odb_transaction **out,
+						enum odb_transaction_flags flags)
+{
+	if (odb_transaction_begin(odb, out, flags))
+		die(_("failed to start ODB transaction"));
+}
 
 /*
  * Commits an ODB transaction making the written objects visible. If the
