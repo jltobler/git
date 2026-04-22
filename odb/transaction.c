@@ -2,15 +2,19 @@
 #include "odb/source.h"
 #include "odb/transaction.h"
 
-struct odb_transaction *odb_transaction_begin(struct object_database *odb,
-					      enum odb_transaction_flags flags)
+int odb_transaction_begin(struct object_database *odb,
+			  struct odb_transaction **out,
+			  enum odb_transaction_flags flags)
 {
-	if (odb->transaction)
-		return NULL;
+	if (odb->transaction) {
+		*out = NULL;
+		return 0;
+	}
 
 	odb_source_begin_transaction(odb->sources, &odb->transaction, flags);
+	*out = odb->transaction;
 
-	return odb->transaction;
+	return 0;
 }
 
 void odb_transaction_commit(struct odb_transaction *transaction)

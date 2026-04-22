@@ -1333,8 +1333,9 @@ int index_fd(struct index_state *istate, struct object_id *oid,
 
 		if (flags & INDEX_WRITE_OBJECT) {
 			struct object_database *odb = the_repository->objects;
-			struct odb_transaction *transaction = odb_transaction_begin(odb, 0);
+			struct odb_transaction *transaction;
 
+			odb_transaction_begin_or_die(odb, &transaction, 0);
 			ret = odb_transaction_write_object_stream(odb->transaction,
 								  &stream,
 								  xsize_t(st->st_size),
