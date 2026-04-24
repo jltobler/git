@@ -1733,8 +1733,8 @@ static int want_object_in_pack_mtime(const struct object_id *oid,
 				     uint32_t found_mtime)
 {
 	int want;
-	struct packfile_list_entry *e;
 	struct odb_source *source;
+	struct packed_git *p;
 
 	if (!exclude && local) {
 		/*
@@ -1743,7 +1743,12 @@ static int want_object_in_pack_mtime(const struct object_id *oid,
 		 */
 		struct odb_source *source = the_repository->objects->sources->next;
 		for (; source; source = source->next) {
-			struct odb_source_files *files = odb_source_files_downcast(source);
+			struct odb_source_files *files;
+
+			if (source->type != ODB_SOURCE_FILES)
+				continue;
+
+			files = odb_source_files_downcast(source);
 			if (!odb_source_read_object_info(&files->loose->base, oid, NULL, 0))
 				return 0;
 		}
@@ -1767,9 +1772,15 @@ static int want_object_in_pack_mtime(const struct object_id *oid,
 	odb_prepare_alternates(the_repository->objects);
 
 	for (source = the_repository->objects->sources; source; source = source->next) {
-		struct odb_source_files *files = odb_source_files_downcast(source);
-		struct multi_pack_index *m = get_multi_pack_index(files->packed);
+		struct odb_source_files *files;
+		struct multi_pack_index *m;
 		struct pack_entry e;
+
+		if (source->type != ODB_SOURCE_FILES)
+			continue;
+
+		files = odb_source_files_downcast(source);
+		m = get_multi_pack_index(files->packed);
 
 		if (m && fill_midx_entry(m, oid, &e)) {
 			want = want_object_in_pack_one(e.p, oid, exclude, found_pack, found_offset, found_mtime);
@@ -1778,17 +1789,10 @@ static int want_object_in_pack_mtime(const struct object_id *oid,
 		}
 	}
 
-	for (source = the_repository->objects->sources; source; source = source->next) {
-		struct odb_source_files *files = odb_source_files_downcast(source);
-
-		for (e = files->packed->packs.head; e; e = e->next) {
-			struct packed_git *p = e->pack;
-			want = want_object_in_pack_one(p, oid, exclude, found_pack, found_offset, found_mtime);
-			if (!exclude && want > 0)
-				packfile_list_prepend(&files->packed->packs, p);
-			if (want != -1)
-				return want;
-		}
+	repo_for_each_pack(the_repository, p) {
+		want = want_object_in_pack_one(p, oid, exclude, found_pack, found_offset, found_mtime);
+		if (want != -1)
+			return want;
 	}
 
 	if (uri_protocols.nr) {
