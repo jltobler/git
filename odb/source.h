@@ -13,6 +13,15 @@ enum odb_source_type {
 
 	/* The "files" backend that uses loose objects and packfiles. */
 	ODB_SOURCE_FILES,
+
+	/* The "loose" backend that uses loose objects, only. */
+	ODB_SOURCE_LOOSE,
+
+	/* The "packed" backend that uses packfiles. */
+	ODB_SOURCE_PACKED,
+
+	/* The "in-memory" backend that stores objects in memory. */
+	ODB_SOURCE_INMEMORY,
 };
 
 struct object_id;
@@ -179,7 +188,8 @@ struct odb_source {
 	 * has been freshened.
 	 */
 	int (*freshen_object)(struct odb_source *source,
-			      const struct object_id *oid);
+			      const struct object_id *oid,
+			      const time_t *mtime);
 
 	/*
 	 * This callback is expected to persist the given object into the
@@ -195,8 +205,9 @@ struct odb_source {
 	int (*write_object)(struct odb_source *source,
 			    const void *buf, unsigned long len,
 			    enum object_type type,
-			    struct object_id *oid,
-			    struct object_id *compat_oid,
+			    const struct object_id *oid,
+			    const struct object_id *compat_oid,
+			    const time_t *mtime,
 			    enum odb_write_object_flags flags);
 
 	/*
@@ -390,9 +401,10 @@ static inline int odb_source_find_abbrev_len(struct odb_source *source,
  * not exist.
  */
 static inline int odb_source_freshen_object(struct odb_source *source,
-					    const struct object_id *oid)
+					    const struct object_id *oid,
+					    const time_t *mtime)
 {
-	return source->freshen_object(source, oid);
+	return source->freshen_object(source, oid, mtime);
 }
 
 /*
@@ -403,12 +415,13 @@ static inline int odb_source_freshen_object(struct odb_source *source,
 static inline int odb_source_write_object(struct odb_source *source,
 					  const void *buf, unsigned long len,
 					  enum object_type type,
-					  struct object_id *oid,
-					  struct object_id *compat_oid,
+					  const struct object_id *oid,
+					  const struct object_id *compat_oid,
+					  const time_t *mtime,
 					  enum odb_write_object_flags flags)
 {
 	return source->write_object(source, buf, len, type, oid,
-				    compat_oid, flags);
+				    compat_oid, mtime, flags);
 }
 
 /*
