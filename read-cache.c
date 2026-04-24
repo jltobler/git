@@ -20,6 +20,7 @@
 #include "dir.h"
 #include "object-file.h"
 #include "odb.h"
+#include "odb/transaction.h"
 #include "oid-array.h"
 #include "tree.h"
 #include "commit.h"
@@ -2340,7 +2341,7 @@ unmap:
  */
 static void freshen_shared_index(const char *shared_index, int warn)
 {
-	if (!check_and_freshen_file(shared_index, 1) && warn)
+	if (!check_and_freshen_file(shared_index, 1, NULL) && warn)
 		warning(_("could not freshen shared index '%s'"), shared_index);
 }
 
