@@ -22,6 +22,9 @@ enum odb_source_type {
 
 	/* The "in-memory" backend that stores objects in memory. */
 	ODB_SOURCE_INMEMORY,
+
+	/* The "S3" backend that stores packfiles in object storage. */
+	ODB_SOURCE_S3,
 };
 
 struct object_id;

@@ -7,6 +7,7 @@
 
 begin_group "Install dependencies"
 
+WEEDWHENCE=https://github.com/seaweedfs/seaweedfs/releases/download/4.22/linux_amd64.tar.gz
 P4WHENCE=https://cdist2.perforce.com/perforce/r23.2
 LFSWHENCE=https://github.com/github/git-lfs/releases/download/v$LINUX_GIT_LFS_VERSION
 JGITWHENCE=https://repo1.maven.org/maven2/org/eclipse/jgit/org.eclipse.jgit.pgm/6.8.0.202311291450-r/org.eclipse.jgit.pgm-6.8.0.202311291450-r.sh
@@ -110,6 +111,11 @@ ubuntu-*|i386/ubuntu-*|debian-*)
 		wget --quiet "$JGITWHENCE" --output-document="$CUSTOM_PATH/jgit" &&
 		chmod a+x "$CUSTOM_PATH/jgit" ||
 		rm -f "$CUSTOM_PATH/jgit"
+
+		wget --quiet "$WEEDWHENCE" --output-document=weed.tar.gz &&
+		tar -xzf weed.tar.gz -C "$CUSTOM_PATH" &&
+		chmod a+x "$CUSTOM_PATH/weed" &&
+		rm weed.tar.gz
 		;;
 	esac
 	;;

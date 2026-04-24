@@ -1221,6 +1221,9 @@ LIB_OBJS += odb/source-files.o
 LIB_OBJS += odb/source-inmemory.o
 LIB_OBJS += odb/source-loose.o
 LIB_OBJS += odb/source-packed.o
+ifndef NO_CURL
+LIB_OBJS += odb/source-s3.o
+endif
 LIB_OBJS += odb/streaming.o
 LIB_OBJS += odb/transaction.o
 LIB_OBJS += oid-array.o
@@ -1802,6 +1805,7 @@ else
 		CURL_CFLAGS = $(eval CURL_CFLAGS := $$(shell $$(CURL_CONFIG) --cflags))$(CURL_CFLAGS)
         endif
 	BASIC_CFLAGS += $(CURL_CFLAGS)
+	EXTLIBS += $(CURL_LIBCURL)
 
 	REMOTE_CURL_PRIMARY = git-remote-http$X
 	REMOTE_CURL_ALIASES = git-remote-https$X git-remote-ftp$X git-remote-ftps$X
