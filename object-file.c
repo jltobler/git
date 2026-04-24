@@ -922,13 +922,11 @@ int force_object_loose(struct odb_source *source,
 {
 	struct odb_source_files *files = odb_source_files_downcast(source);
 	const struct git_hash_algo *compat = source->odb->repo->compat_hash_algo;
-	void *buf;
-	unsigned long len;
 	struct object_info oi = OBJECT_INFO_INIT;
-	struct object_id compat_oid;
+	struct object_id compat_oid, *compat_oid_p = NULL;
 	enum object_type type;
-	char hdr[MAX_HEADER_LEN];
-	int hdrlen;
+	unsigned long len;
+	void *buf;
 	int ret;
 
 	for (struct odb_source *s = source->odb->sources; s; s = s->next) {
@@ -946,13 +944,13 @@ int force_object_loose(struct odb_source *source,
 		if (repo_oid_to_algop(source->odb->repo, oid, compat, &compat_oid))
 			return error(_("cannot map object %s to %s"),
 				     oid_to_hex(oid), compat->name);
+		compat_oid_p = &compat_oid;
 	}
-	hdrlen = format_object_header(hdr, sizeof(hdr), type, len);
-	ret = write_loose_object(source, oid, hdr, hdrlen, buf, len, mtime, 0);
-	if (!ret && compat)
-		ret = repo_add_loose_object_map(files->loose, oid, &compat_oid);
-	free(buf);
 
+	ret = odb_source_write_object(&files->loose->base, buf, len, type, oid,
+				      compat_oid_p, mtime, 0);
+
+	free(buf);
 	return ret;
 }
 
