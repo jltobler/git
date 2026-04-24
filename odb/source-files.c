@@ -262,6 +262,12 @@ out:
 	return ret;
 }
 
+static int odb_source_files_get_packs(struct odb_source *source, struct packfile_list_entry **out)
+{
+	struct odb_source_files *files = odb_source_files_downcast(source);
+	return odb_source_get_packs(&files->packed->base, out);
+}
+
 struct odb_source_files *odb_source_files_new(struct object_database *odb,
 					      const char *path,
 					      bool local)
@@ -287,6 +293,7 @@ struct odb_source_files *odb_source_files_new(struct object_database *odb,
 	files->base.begin_transaction = odb_source_files_begin_transaction;
 	files->base.read_alternates = odb_source_files_read_alternates;
 	files->base.write_alternate = odb_source_files_write_alternate;
+	files->base.get_packs = odb_source_files_get_packs;
 
 	/*
 	 * Ideally, we would only ever store absolute paths in the source. This

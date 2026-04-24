@@ -92,12 +92,9 @@ static inline struct repo_for_each_pack_data repo_for_eack_pack_data_init(struct
 	odb_prepare_alternates(repo->objects);
 
 	for (struct odb_source *source = repo->objects->sources; source; source = source->next) {
-		struct odb_source_files *files = odb_source_files_downcast(source);
-		struct packfile_list_entry *entry = packfile_store_get_packs(files->packed);
-		if (!entry)
+		if (odb_source_get_packs(source, &data.entry) < 0 || !data.entry)
 			continue;
 		data.source = source;
-		data.entry = entry;
 		break;
 	}
 
@@ -113,12 +110,9 @@ static inline void repo_for_each_pack_data_next(struct repo_for_each_pack_data *
 		return;
 
 	for (source = data->source->next; source; source = source->next) {
-		struct odb_source_files *files = odb_source_files_downcast(source);
-		struct packfile_list_entry *entry = packfile_store_get_packs(files->packed);
-		if (!entry)
+		if (odb_source_get_packs(source, &data->entry) < 0 || !data->entry)
 			continue;
 		data->source = source;
-		data->entry = entry;
 		return;
 	}
 

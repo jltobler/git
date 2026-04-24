@@ -26,6 +26,7 @@ enum odb_source_type {
 
 struct object_id;
 struct odb_read_stream;
+struct packfile_list_entry;
 struct strvec;
 
 /*
@@ -260,6 +261,8 @@ struct odb_source {
 	 */
 	int (*write_alternate)(struct odb_source *source,
 			       const char *alternate);
+
+	int (*get_packs)(struct odb_source *source, struct packfile_list_entry **out);
 };
 
 /*
@@ -477,6 +480,12 @@ static inline int odb_source_begin_transaction(struct odb_source *source,
 					       struct odb_transaction **out)
 {
 	return source->begin_transaction(source, out);
+}
+
+static inline int odb_source_get_packs(struct odb_source *source,
+				       struct packfile_list_entry **out)
+{
+	return source->get_packs(source, out);
 }
 
 #endif

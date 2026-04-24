@@ -710,6 +710,13 @@ static void odb_source_packed_free(struct odb_source *source)
 	free(packed);
 }
 
+static int odb_source_packed_get_packs(struct odb_source *source, struct packfile_list_entry **out)
+{
+	struct odb_source_packed *packed = odb_source_packed_downcast(source);
+	*out = packfile_store_get_packs(packed);
+	return 0;
+}
+
 struct odb_source_packed *odb_source_packed_new(struct object_database *odb,
 						const char *path,
 						bool local)
@@ -733,6 +740,7 @@ struct odb_source_packed *odb_source_packed_new(struct object_database *odb,
 	packed->base.begin_transaction = odb_source_packed_begin_transaction;
 	packed->base.read_alternates = odb_source_packed_read_alternates;
 	packed->base.write_alternate = odb_source_packed_write_alternate;
+	packed->base.get_packs = odb_source_packed_get_packs;
 
 	if (!is_absolute_path(path))
 		chdir_notify_register(NULL, odb_source_packed_reparent, packed);
