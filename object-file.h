@@ -123,10 +123,6 @@ int finalize_object_file_flags(struct repository *repo,
 void hash_object_file(const struct git_hash_algo *algo, const void *buf,
 		      unsigned long len, enum object_type type,
 		      struct object_id *oid);
-void write_object_file_prepare(const struct git_hash_algo *algo,
-			       const void *buf, unsigned long len,
-			       enum object_type type, struct object_id *oid,
-			       char *hdr, int *hdrlen);
 int write_loose_object(struct odb_source *source,
 		       const struct object_id *oid, char *hdr,
 		       int hdrlen, const void *buf, unsigned long len,
