@@ -738,7 +738,7 @@ int odb_pretend_object(struct object_database *odb,
 		return 0;
 
 	return odb_source_write_object(odb->inmemory_objects,
-				       buf, len, type, oid, NULL, 0);
+				       buf, len, type, oid, NULL, NULL, 0);
 }
 
 void *odb_read_object(struct object_database *odb,
@@ -824,12 +824,13 @@ int odb_has_object(struct object_database *odb, const struct object_id *oid,
 }
 
 int odb_freshen_object(struct object_database *odb,
-		       const struct object_id *oid)
+		       const struct object_id *oid,
+		       const time_t *mtime)
 {
 	struct odb_source *source;
 	odb_prepare_alternates(odb);
 	for (source = odb->sources; source; source = source->next)
-		if (odb_source_freshen_object(source, oid))
+		if (odb_source_freshen_object(source, oid, mtime))
 			return 1;
 	return 0;
 }
@@ -1001,7 +1002,7 @@ int odb_write_object_ext(struct object_database *odb,
 	 * We can skip the write in case we already have the object available.
 	 * In that case, we only freshen its mtime.
 	 */
-	if (odb_freshen_object(odb, oid))
+	if (odb_freshen_object(odb, oid, NULL))
 		return 0;
 
 	if (compat) {
@@ -1024,7 +1025,7 @@ int odb_write_object_ext(struct object_database *odb,
 	}
 
 	return odb_source_write_object(odb->sources, buf, len, type,
-				       oid, compat_oid_p, flags);
+				       oid, compat_oid_p, NULL, flags);
 }
 
 int odb_write_object_stream(struct object_database *odb,
