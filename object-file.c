@@ -1627,13 +1627,15 @@ out:
 	return ret;
 }
 
-static void odb_transaction_files_commit(struct odb_transaction *base)
+static int odb_transaction_files_commit(struct odb_transaction *base)
 {
 	struct odb_transaction_files *transaction =
 		container_of(base, struct odb_transaction_files, base);
 
 	flush_loose_object_transaction(transaction);
 	flush_packfile_transaction(transaction);
+
+	return 0;
 }
 
 static const char **odb_transaction_files_env(struct odb_transaction *base)
