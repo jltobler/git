@@ -503,6 +503,7 @@ out:
 int reftable_new_stack(struct reftable_stack **dest, const char *dir,
 		       const struct reftable_write_options *_opts)
 {
+	const char *env_list_file = getenv("GIT_REFTABLE_LIST_FILE");
 	struct reftable_buf list_file_name = REFTABLE_BUF_INIT;
 	struct reftable_write_options opts = { 0 };
 	struct reftable_stack *p;
@@ -522,9 +523,15 @@ int reftable_new_stack(struct reftable_stack **dest, const char *dir,
 	*dest = NULL;
 
 	reftable_buf_reset(&list_file_name);
-	if ((err = reftable_buf_addstr(&list_file_name, dir)) < 0 ||
-	    (err = reftable_buf_addstr(&list_file_name, "/tables.list")) < 0)
-		goto out;
+	if (env_list_file) {
+		if ((err = reftable_buf_addstr(&list_file_name, env_list_file)) < 0)
+			goto out;
+	} else {
+		if ((err = reftable_buf_addstr(&list_file_name, dir)) < 0 ||
+		    (err = reftable_buf_addstr(&list_file_name, "/tables.list")) < 0)
+			goto out;
+	}
+
 
 	p->list_file = reftable_buf_detach(&list_file_name);
 	p->list_fd = -1;
