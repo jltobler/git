@@ -537,13 +537,13 @@ static void fsync_loose_object_transaction(struct odb_transaction *base,
 /*
  * Cleanup after batch-mode fsync_object_files.
  */
-static void flush_loose_object_transaction(struct odb_transaction_files *transaction)
+static int flush_loose_object_transaction(struct odb_transaction_files *transaction)
 {
 	struct strbuf temp_path = STRBUF_INIT;
 	struct tempfile *temp;
 
 	if (!transaction->objdir)
-		return;
+		return 0;
 
 	/*
 	 * Issue a full hardware flush against a temporary file to ensure
@@ -565,8 +565,12 @@ static void flush_loose_object_transaction(struct odb_transaction_files *transac
 	 * Make the object files visible in the primary ODB after their data is
 	 * fully durable.
 	 */
-	tmp_objdir_migrate(transaction->objdir);
+	if (tmp_objdir_migrate(transaction->objdir))
+		return -1;
+
 	transaction->objdir = NULL;
+
+	return 0;
 }
 
 /* Finalize a file on disk, and close it. */
@@ -1632,7 +1636,8 @@ static int odb_transaction_files_commit(struct odb_transaction *base)
 	struct odb_transaction_files *transaction =
 		container_of(base, struct odb_transaction_files, base);
 
-	flush_loose_object_transaction(transaction);
+	if (flush_loose_object_transaction(transaction))
+		return -1;
 	flush_packfile_transaction(transaction);
 
 	return 0;
