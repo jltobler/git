@@ -185,11 +185,7 @@ static int odb_source_files_begin_transaction(struct odb_source *source,
 					      struct odb_transaction **out,
 					      enum odb_transaction_flags flags)
 {
-	struct odb_transaction *tx = odb_transaction_files_begin(source, flags);
-	if (!tx)
-		return -1;
-	*out = tx;
-	return 0;
+	return odb_transaction_files_begin(source, out, flags);
 }
 
 static int odb_source_files_read_alternates(struct odb_source *source,
