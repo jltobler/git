@@ -490,7 +490,7 @@ struct odb_transaction_files {
 	const char *prefix;
 };
 
-static void odb_transaction_files_prepare(struct odb_transaction *base)
+static int odb_transaction_files_prepare(struct odb_transaction *base)
 {
 	struct odb_transaction_files *transaction =
 		container_of_or_null(base, struct odb_transaction_files, base);
@@ -502,11 +502,15 @@ static void odb_transaction_files_prepare(struct odb_transaction *base)
 	 * added at the time they call odb_transaction_files_begin.
 	 */
 	if (!transaction || transaction->objdir)
-		return;
+		return 0;
 
 	transaction->objdir = tmp_objdir_create(base->source->odb->repo, transaction->prefix);
 	if (transaction->objdir)
 		tmp_objdir_replace_primary_odb(transaction->objdir, 0);
+	else
+		return error("unable to create temporary object directory");
+
+	return 0;
 }
 
 static void fsync_loose_object_transaction(struct odb_transaction *base,
@@ -1642,14 +1646,17 @@ static const char **odb_transaction_files_env(struct odb_transaction *base)
 	return tmp_objdir_env(transaction->objdir);
 }
 
-struct odb_transaction *odb_transaction_files_begin(struct odb_source *source,
-						    enum odb_transaction_flags flags)
+int odb_transaction_files_begin(struct odb_source *source,
+				struct odb_transaction **out,
+				enum odb_transaction_flags flags)
 {
 	struct odb_transaction_files *transaction;
 	struct object_database *odb = source->odb;
 
-	if (odb->transaction)
-		return NULL;
+	if (odb->transaction) {
+		*out = NULL;
+		return 0;
+	}
 
 	transaction = xcalloc(1, sizeof(*transaction));
 	transaction->base.source = source;
@@ -1657,11 +1664,12 @@ struct odb_transaction *odb_transaction_files_begin(struct odb_source *source,
 	transaction->base.write_object_stream = odb_transaction_files_write_object_stream;
 	transaction->base.env = odb_transaction_files_env;
 	transaction->prefix = "bulk-fsync";
+	*out = &transaction->base;
 
 	if (flags & ODB_TRANSACTION_RECEIVE) {
 		transaction->prefix = "incoming";
-		odb_transaction_files_prepare(&transaction->base);
+		return odb_transaction_files_prepare(&transaction->base);
 	}
 
-	return &transaction->base;
+	return 0;
 }

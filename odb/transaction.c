@@ -6,15 +6,17 @@ int odb_transaction_begin(struct object_database *odb,
 			  struct odb_transaction **out,
 			  enum odb_transaction_flags flags)
 {
+	int ret;
+
 	if (odb->transaction) {
 		*out = NULL;
 		return 0;
 	}
 
-	odb_source_begin_transaction(odb->sources, &odb->transaction, flags);
+	ret = odb_source_begin_transaction(odb->sources, &odb->transaction, flags);
 	*out = odb->transaction;
 
-	return 0;
+	return ret;
 }
 
 void odb_transaction_commit(struct odb_transaction *transaction)
