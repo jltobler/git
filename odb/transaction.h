@@ -6,6 +6,29 @@
 #include "odb.h"
 
 /*
+ * Options for `odb_transaction_write_pack()`.
+ */
+struct odb_transaction_write_pack_opts {
+	const char *fsck_msg_types;
+	const char *shallow_file;
+	const char *error_msg;
+	off_t max_pack_size;
+	unsigned unpack_limit;
+	int fsck_objects;
+	int reject_thin;
+	int err_fd;
+	int quiet;
+
+	/*
+	 * To prevent races with concurrent repacks, the "files" backend creates
+	 * a lockfile that remains after the ODB transaction is committed. This
+	 * lockfile is expected to be removed only after the references are
+	 * updated.
+	 */
+	struct tempfile *pack_lockfile;
+};
+
+/*
  * A transaction may be started for an object database prior to writing new
  * objects via odb_transaction_begin(). These objects are not committed until
  * odb_transaction_commit() is invoked. Only a single transaction may be pending
@@ -31,6 +54,9 @@ struct odb_transaction {
 	int (*write_object_stream)(struct odb_transaction *transaction,
 				   struct odb_write_stream *stream, size_t len,
 				   struct object_id *oid);
+
+	int (*write_pack)(struct odb_transaction *transaction, int pack_fd,
+			  struct odb_transaction_write_pack_opts *opts);
 
 	const char **(*env)(struct odb_transaction *transaction);
 };
@@ -70,6 +96,13 @@ int odb_transaction_commit(struct odb_transaction *transaction);
 int odb_transaction_write_object_stream(struct odb_transaction *transaction,
 					struct odb_write_stream *stream,
 					size_t len, struct object_id *oid);
+
+/*
+ * Writes the objects contained in the provided packfile via fd into the
+ * transaction. Returns 0 on success, a negative error code otherwise.
+ */
+int odb_transaction_write_pack(struct odb_transaction *transaction, int pack_fd,
+			       struct odb_transaction_write_pack_opts *opts);
 
 const char **odb_transaction_env(struct odb_transaction *transaction);
 
