@@ -2389,8 +2389,8 @@ static const char *unpack(int err_fd, const char *shallow_file, struct odb_trans
 		// if (fsck_objects)
 		// 	strvec_pushf(&child.args, "--strict%s",
 		// 		     fsck_msg_types.buf);
-		if (!reject_thin)
-			strvec_push(&child.args, "--fix-thin");
+		// if (!reject_thin)
+		strvec_push(&child.args, "--fix-thin");
 		// if (max_input_size)
 		// 	strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX,
 		// 		     (uintmax_t)max_input_size);
