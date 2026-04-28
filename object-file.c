@@ -26,7 +26,9 @@
 #include "packfile.h"
 #include "path.h"
 #include "read-cache-ll.h"
+#include "run-command.h"
 #include "setup.h"
+#include "strvec.h"
 #include "tempfile.h"
 #include "tmp-objdir.h"
 
@@ -1700,6 +1702,128 @@ static const char **odb_transaction_files_env(struct odb_transaction *base)
 	return tmp_objdir_env(transaction->objdir);
 }
 
+static const char *parse_pack_header(struct pack_header *hdr, int pack_fd)
+{
+	switch (read_pack_header(pack_fd, hdr)) {
+	case PH_ERROR_EOF:
+		return "eof before pack header was fully read";
+	case PH_ERROR_PACK_SIGNATURE:
+		return "protocol error (pack signature mismatch detected)";
+	case PH_ERROR_PROTOCOL:
+		return "protocol error (pack version unsupported)";
+	default:
+		return "unknown error in parse_pack_header";
+	case 0:
+		return NULL;
+	}
+}
+
+static void push_header_arg(struct strvec *args, struct pack_header *hdr)
+{
+	strvec_pushf(args, "--pack_header=%" PRIu32 ",%" PRIu32,
+		     ntohl(hdr->hdr_version), ntohl(hdr->hdr_entries));
+}
+
+static int odb_transaction_files_write_pack(struct odb_transaction *base,
+					    int pack_fd,
+					    struct odb_transaction_write_pack_opts *opts)
+{
+	struct pack_header hdr;
+	const char *hdr_err;
+	int status;
+	struct child_process child = CHILD_PROCESS_INIT;
+	int err_fd = opts->err_fd;
+
+	hdr_err = parse_pack_header(&hdr, pack_fd);
+	if (hdr_err) {
+		if (err_fd > 0)
+			close(err_fd);
+		opts->error_msg = hdr_err;
+		return -1;
+	}
+
+	if (opts->shallow_file) {
+		strvec_push(&child.args, "--shallow-file");
+		strvec_push(&child.args, opts->shallow_file);
+	}
+
+	strvec_pushv(&child.env, odb_transaction_env(base));
+
+	if (ntohl(hdr.hdr_entries) < opts->unpack_limit) {
+		strvec_push(&child.args, "unpack-objects");
+		push_header_arg(&child.args, &hdr);
+		if (opts->quiet)
+			strvec_push(&child.args, "-q");
+		if (opts->fsck_objects)
+			strvec_pushf(&child.args, "--strict%s",
+				     opts->fsck_msg_types);
+		if (opts->max_pack_size)
+			strvec_pushf(&child.args, "--max-input-size=%" PRIuMAX,
+				     (uintmax_t)opts->max_pack_size);
+		child.no_stdout = 1;
+		child.in = pack_fd;
+		child.err = err_fd;
+		child.git_cmd = 1;
+		status = run_command(&child);
+		if (status) {
+			opts->error_msg = "unpack-objects abnormal exit";
+			return -1;
+		}
+	} else {
+		char hostname[HOST_NAME_MAX + 1];
+		char *lockfile;
+
+		strvec_pushl(&child.args, "index-pack", "--stdin", NULL);
+		push_header_arg(&child.args, &hdr);
+
+		if (xgethostname(hostname, sizeof(hostname)))
+			xsnprintf(hostname, sizeof(hostname), "localhost");
+		strvec_pushf(&child.args,
+			     "--keep=receive-pack %" PRIuMAX " on %s",
+			     (uintmax_t)getpid(),
+			     hostname);
+
+		if (!opts->quiet && err_fd)
+			strvec_push(&child.args, "--show-resolving-progress");
+		if (err_fd)
+			strvec_push(&child.args, "--report-end-of-input");
+		if (opts->fsck_objects)
+			strvec_pushf(&child.args, "--strict%s",
+				     opts->fsck_msg_types);
+		if (!opts->reject_thin)
+			strvec_push(&child.args, "--fix-thin");
+		if (opts->max_pack_size)
+			strvec_pushf(&child.args, "--max-input-size=%" PRIuMAX,
+				     (uintmax_t)opts->max_pack_size);
+		child.out = -1;
+		child.in = pack_fd;
+		child.err = err_fd;
+		child.git_cmd = 1;
+		status = start_command(&child);
+		if (status) {
+			opts->error_msg = "index-pack fork failed";
+			return -1;
+		}
+
+		lockfile = index_pack_lockfile(the_repository, child.out, NULL);
+		if (lockfile) {
+			opts->pack_lockfile = register_tempfile(lockfile);
+			free(lockfile);
+		}
+		close(child.out);
+
+		status = finish_command(&child);
+		if (status) {
+			opts->error_msg = "index-pack abnormal exit";
+			return -1;
+		}
+
+		odb_reprepare(the_repository->objects);
+	}
+
+	return 0;
+}
+
 int odb_transaction_files_begin(struct odb_source *source,
 				struct odb_transaction **out,
 				enum odb_transaction_flags flags)
@@ -1716,6 +1840,7 @@ int odb_transaction_files_begin(struct odb_source *source,
 	transaction->base.source = source;
 	transaction->base.commit = odb_transaction_files_commit;
 	transaction->base.write_object_stream = odb_transaction_files_write_object_stream;
+	transaction->base.write_pack = odb_transaction_files_write_pack;
 	transaction->base.env = odb_transaction_files_env;
 	transaction->prefix = "bulk-fsync";
 	*out = &transaction->base;
