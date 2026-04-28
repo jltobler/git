@@ -2325,11 +2325,11 @@ static const char *unpack(int err_fd, const char *shallow_file, struct odb_trans
 	const char *hdr_err;
 	int status;
 	struct child_process child = CHILD_PROCESS_INIT;
-	int fsck_objects = (receive_fsck_objects >= 0
-			    ? receive_fsck_objects
-			    : transfer_fsck_objects >= 0
-			    ? transfer_fsck_objects
-			    : 0);
+	// int fsck_objects = (receive_fsck_objects >= 0
+	// 		    ? receive_fsck_objects
+	// 		    : transfer_fsck_objects >= 0
+	// 		    ? transfer_fsck_objects
+	// 		    : 0);
 
 	hdr_err = parse_pack_header(&hdr);
 	if (hdr_err) {
@@ -2353,14 +2353,14 @@ static const char *unpack(int err_fd, const char *shallow_file, struct odb_trans
 	if (ntohl(hdr.hdr_entries) < unpack) {
 		strvec_push(&child.args, "unpack-objects");
 		push_header_arg(&child.args, &hdr);
-		if (quiet)
-			strvec_push(&child.args, "-q");
-		if (fsck_objects)
-			strvec_pushf(&child.args, "--strict%s",
-				     fsck_msg_types.buf);
-		if (max_input_size)
-			strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX,
-				     (uintmax_t)max_input_size);
+		// if (quiet)
+		// 	strvec_push(&child.args, "-q");
+		// if (fsck_objects)
+		// 	strvec_pushf(&child.args, "--strict%s",
+		// 		     fsck_msg_types.buf);
+		// if (max_input_size)
+		// 	strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX,
+		// 		     (uintmax_t)max_input_size);
 		child.no_stdout = 1;
 		child.err = err_fd;
 		child.git_cmd = 1;
@@ -2381,18 +2381,19 @@ static const char *unpack(int err_fd, const char *shallow_file, struct odb_trans
 			     (uintmax_t)getpid(),
 			     hostname);
 
-		if (!quiet && err_fd)
+		// if (!quiet && err_fd)
+		if (err_fd)
 			strvec_push(&child.args, "--show-resolving-progress");
 		if (use_sideband)
 			strvec_push(&child.args, "--report-end-of-input");
-		if (fsck_objects)
-			strvec_pushf(&child.args, "--strict%s",
-				     fsck_msg_types.buf);
+		// if (fsck_objects)
+		// 	strvec_pushf(&child.args, "--strict%s",
+		// 		     fsck_msg_types.buf);
 		if (!reject_thin)
 			strvec_push(&child.args, "--fix-thin");
-		if (max_input_size)
-			strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX,
-				     (uintmax_t)max_input_size);
+		// if (max_input_size)
+		// 	strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX,
+		// 		     (uintmax_t)max_input_size);
 		child.out = -1;
 		child.err = err_fd;
 		child.git_cmd = 1;
