@@ -5,6 +5,19 @@
 #include "gettext.h"
 #include "odb.h"
 
+/* This is a complete hack for know while I figure out the interface */
+struct odb_transaction_write_pack_opts {
+	const char *fsck_msg_types;
+	const char *shallow_file;
+	const char *error_msg;
+	off_t max_pack_size;
+	unsigned unpack_limit;
+	int fsck_objects;
+	int reject_thin;
+	int err_fd;
+	int quiet;
+};
+
 /*
  * A transaction may be started for an object database prior to writing new
  * objects via odb_transaction_begin(). These objects are not committed until
@@ -31,6 +44,9 @@ struct odb_transaction {
 	int (*write_object_stream)(struct odb_transaction *transaction,
 				   struct odb_write_stream *stream, size_t len,
 				   struct object_id *oid);
+
+	int (*write_pack)(struct odb_transaction *transaction, int pack_fd,
+			  struct odb_transaction_write_pack_opts *opts);
 
 	const char **(*env)(struct odb_transaction *transaction);
 };
@@ -70,6 +86,9 @@ int odb_transaction_commit(struct odb_transaction *transaction);
 int odb_transaction_write_object_stream(struct odb_transaction *transaction,
 					struct odb_write_stream *stream,
 					size_t len, struct object_id *oid);
+
+int odb_transaction_write_pack(struct odb_transaction *transaction, int pack_fd,
+			       struct odb_transaction_write_pack_opts *opts);
 
 const char **odb_transaction_env(struct odb_transaction *transaction);
 
