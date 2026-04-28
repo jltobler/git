@@ -2320,6 +2320,7 @@ static void push_header_arg(struct strvec *args, struct pack_header *hdr)
 
 static const char *unpack(int err_fd, const char *shallow_file, struct odb_transaction *transaction)
 {
+	int unpack = 100;
 	struct pack_header hdr;
 	const char *hdr_err;
 	int status;
@@ -2344,7 +2345,12 @@ static const char *unpack(int err_fd, const char *shallow_file, struct odb_trans
 
 	strvec_pushv(&child.env, odb_transaction_env(transaction));
 
-	if (ntohl(hdr.hdr_entries) < unpack_limit) {
+	/* 
+	 * TODO: The unpack limit is going to be specific to the files backend.
+	 * We should eventually properly read this configuration. For now
+	 * though we just ignore it and force the default value of 100.
+	 */
+	if (ntohl(hdr.hdr_entries) < unpack) {
 		strvec_push(&child.args, "unpack-objects");
 		push_header_arg(&child.args, &hdr);
 		if (quiet)
