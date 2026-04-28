@@ -593,7 +593,30 @@ static int keep_one_pack(struct string_list_item *item, void *data)
 	return 0;
 }
 
-static void add_repack_all_option(struct gc_config *cfg,
+struct odb_optimize_options {
+	const char *prune_expire;
+	const char *expire_to;
+	int no_reuse_deltas;
+	int depth;
+	int window;
+	int quiet;
+	int auto_maintenance;
+
+	/* Backend-specific options. */
+	int keep_largest_pack;
+	int cruft_packs;
+	unsigned long max_cruft_size;
+};
+
+#define OPTIMIZE_FIELDS_FROM_GC_CONFIG(cfg, aggressive) \
+	.prune_expire = cfg->prune_expire, \
+	.expire_to = cfg->repack_expire_to, \
+	.cruft_packs = cfg->cruft_packs, \
+	.max_cruft_size = cfg->max_cruft_size, \
+	.window = aggressive ? cfg->aggressive_window : 0, \
+	.depth = aggressive ? cfg->aggressive_depth : 0
+
+static void add_repack_all_option(const struct odb_optimize_options *opts,
 				  struct string_list *keep_pack,
 				  struct strvec *args)
 {
@@ -603,22 +626,22 @@ static void add_repack_all_option(struct gc_config *cfg,
 	repo_config_get_string(the_repository, "gc.repackfilter", &repack_filter);
 	repo_config_get_string(the_repository, "gc.repackfilterto", &repack_filter_to);
 
-	if (cfg->prune_expire && !strcmp(cfg->prune_expire, "now")
-		&& !(cfg->cruft_packs && cfg->repack_expire_to))
+	if (opts->prune_expire && !strcmp(opts->prune_expire, "now") &&
+	    !(opts->cruft_packs && opts->expire_to))
 		strvec_push(args, "-a");
-	else if (cfg->cruft_packs) {
+	else if (opts->cruft_packs) {
 		strvec_push(args, "--cruft");
-		if (cfg->prune_expire)
-			strvec_pushf(args, "--cruft-expiration=%s", cfg->prune_expire);
-		if (cfg->max_cruft_size)
+		if (opts->prune_expire)
+			strvec_pushf(args, "--cruft-expiration=%s", opts->prune_expire);
+		if (opts->max_cruft_size)
 			strvec_pushf(args, "--max-cruft-size=%lu",
-				     cfg->max_cruft_size);
-		if (cfg->repack_expire_to)
-			strvec_pushf(args, "--expire-to=%s", cfg->repack_expire_to);
+				     opts->max_cruft_size);
+		if (opts->expire_to)
+			strvec_pushf(args, "--expire-to=%s", opts->expire_to);
 	} else {
 		strvec_push(args, "-A");
-		if (cfg->prune_expire)
-			strvec_pushf(args, "--unpack-unreachable=%s", cfg->prune_expire);
+		if (opts->prune_expire)
+			strvec_pushf(args, "--unpack-unreachable=%s", opts->prune_expire);
 	}
 
 	if (keep_pack)
@@ -788,10 +811,8 @@ static int gc_foreground_tasks(struct maintenance_run_opts *opts,
 	return 0;
 }
 
-static int maintenance_task_odb(struct maintenance_run_opts *opts,
-				struct gc_config *cfg,
-				int keep_largest_pack,
-				int aggressive)
+static int odb_optimize(struct object_database *odb,
+			const struct odb_optimize_options *opts)
 {
 	struct child_process repack_cmd = CHILD_PROCESS_INIT;
 	unsigned long big_pack_threshold = 0;
@@ -803,20 +824,19 @@ static int maintenance_task_odb(struct maintenance_run_opts *opts,
 	repo_config_get_int(the_repository, "gc.autopacklimit", &gc_auto_pack_limit);
 	repo_config_get_ulong(the_repository, "gc.bigpackthreshold", &big_pack_threshold);
 
-	if (the_repository->repository_format_precious_objects)
+	if (odb->repo->repository_format_precious_objects)
 		return 0;
 
 	repack_cmd.git_cmd = 1;
 	repack_cmd.odb_to_close = the_repository->objects;
 
 	strvec_pushl(&repack_cmd.args, "repack", "-d", "-l", NULL);
-	if (aggressive) {
+	if (opts->no_reuse_deltas)
 		strvec_push(&repack_cmd.args, "-f");
-		if (cfg->aggressive_depth > 0)
-			strvec_pushf(&repack_cmd.args, "--depth=%d", cfg->aggressive_depth);
-		if (cfg->aggressive_window > 0)
-			strvec_pushf(&repack_cmd.args, "--window=%d", cfg->aggressive_window);
-	}
+	if (opts->depth > 0)
+		strvec_pushf(&repack_cmd.args, "--depth=%d", opts->depth);
+	if (opts->window > 0)
+		strvec_pushf(&repack_cmd.args, "--window=%d", opts->window);
 	if (opts->quiet)
 		strvec_push(&repack_cmd.args, "-q");
 
@@ -831,47 +851,49 @@ static int maintenance_task_odb(struct maintenance_run_opts *opts,
 	 *
 	 *   - Otherwise we perform an incremental repack.
 	 */
-	if (!opts->auto_flag) {
+	if (!opts->auto_maintenance) {
 		struct string_list keep_pack = STRING_LIST_INIT_NODUP;
 
-		if (keep_largest_pack != -1) {
-			if (keep_largest_pack)
+		if (opts->keep_largest_pack != -1) {
+			if (opts->keep_largest_pack)
 				find_base_packs(&keep_pack, 0);
 		} else if (big_pack_threshold) {
 			find_base_packs(&keep_pack, big_pack_threshold);
 		}
 
-		add_repack_all_option(cfg, &keep_pack, &repack_cmd.args);
-		string_list_clear(&keep_pack, 0);
-	} else if (too_many_packs(gc_auto_pack_limit)) {
-		struct string_list keep_pack = STRING_LIST_INIT_NODUP;
-
-		if (big_pack_threshold) {
-			find_base_packs(&keep_pack, big_pack_threshold);
-			if (keep_pack.nr >= gc_auto_pack_limit) {
-				string_list_clear(&keep_pack, 0);
-				find_base_packs(&keep_pack, 0);
-			}
-		} else {
-			struct packed_git *p = find_base_packs(&keep_pack, 0);
-			uint64_t mem_have, mem_want;
-
-			mem_have = total_ram();
-			mem_want = estimate_repack_memory(p);
-
-			/*
-			 * Only allow 1/2 of memory for pack-objects, leave
-			 * the rest for the OS and other processes in the
-			 * system.
-			 */
-			if (!mem_have || mem_want < mem_have / 2)
-				string_list_clear(&keep_pack, 0);
-		}
-
-		add_repack_all_option(cfg, &keep_pack, &repack_cmd.args);
+		add_repack_all_option(opts, &keep_pack, &repack_cmd.args);
 		string_list_clear(&keep_pack, 0);
 	} else {
-		add_repack_incremental_option(&repack_cmd.args);
+		if (too_many_packs(gc_auto_pack_limit)) {
+			struct string_list keep_pack = STRING_LIST_INIT_NODUP;
+
+			if (big_pack_threshold) {
+				find_base_packs(&keep_pack, big_pack_threshold);
+				if (keep_pack.nr >= gc_auto_pack_limit) {
+					string_list_clear(&keep_pack, 0);
+					find_base_packs(&keep_pack, 0);
+				}
+			} else {
+				struct packed_git *p = find_base_packs(&keep_pack, 0);
+				uint64_t mem_have, mem_want;
+
+				mem_have = total_ram();
+				mem_want = estimate_repack_memory(p);
+
+				/*
+				 * Only allow 1/2 of memory for pack-objects, leave
+				 * the rest for the OS and other processes in the
+				 * system.
+				 */
+				if (!mem_have || mem_want < mem_have / 2)
+					string_list_clear(&keep_pack, 0);
+			}
+
+			add_repack_all_option(opts, &keep_pack, &repack_cmd.args);
+			string_list_clear(&keep_pack, 0);
+		} else {
+			add_repack_incremental_option(&repack_cmd.args);
+		}
 	}
 
 	if (run_command(&repack_cmd)) {
@@ -879,12 +901,12 @@ static int maintenance_task_odb(struct maintenance_run_opts *opts,
 		goto out;
 	}
 
-	if (cfg->prune_expire) {
+	if (opts->prune_expire) {
 		struct child_process prune_cmd = CHILD_PROCESS_INIT;
 
 		strvec_pushl(&prune_cmd.args, "prune", "--expire", NULL);
 		/* run `git prune` even if using cruft packs */
-		strvec_push(&prune_cmd.args, cfg->prune_expire);
+		strvec_push(&prune_cmd.args, opts->prune_expire);
 		if (opts->quiet)
 			strvec_push(&prune_cmd.args, "--no-progress");
 		if (repo_has_promisor_remote(the_repository))
@@ -898,7 +920,7 @@ static int maintenance_task_odb(struct maintenance_run_opts *opts,
 		}
 	}
 
-	if (opts->auto_flag && too_many_loose_objects(gc_auto_threshold))
+	if (opts->auto_maintenance && too_many_loose_objects(gc_auto_threshold))
 		warning(_("There are too many unreachable loose objects; "
 			"run 'git prune' to remove them."));
 
@@ -906,6 +928,22 @@ static int maintenance_task_odb(struct maintenance_run_opts *opts,
 
 out:
 	return ret;
+}
+
+static int maintenance_task_odb(struct maintenance_run_opts *opts,
+				struct gc_config *cfg,
+				int keep_largest_pack,
+				int aggressive)
+{
+	struct odb_optimize_options odb_opts = {
+		.quiet = opts->quiet,
+		.no_reuse_deltas = aggressive,
+		.keep_largest_pack = keep_largest_pack,
+		.auto_maintenance = opts->auto_flag,
+		OPTIMIZE_FIELDS_FROM_GC_CONFIG(cfg, aggressive),
+	};
+
+	return odb_optimize(the_repository->objects, &odb_opts);
 }
 
 int cmd_gc(int argc,
@@ -1597,11 +1635,17 @@ static int maintenance_task_geometric_repack(struct maintenance_run_opts *opts,
 	child.git_cmd = 1;
 
 	strvec_pushl(&child.args, "repack", "-d", "-l", NULL);
-	if (geometry.split < geometry.pack_nr)
+	if (geometry.split < geometry.pack_nr) {
 		strvec_pushf(&child.args, "--geometric=%d",
 			     geometry.split_factor);
-	else
-		add_repack_all_option(cfg, NULL, &child.args);
+	} else {
+		struct odb_optimize_options odb_opts = {
+			.quiet = opts->quiet,
+			OPTIMIZE_FIELDS_FROM_GC_CONFIG(cfg, 0),
+		};
+
+		add_repack_all_option(&odb_opts, NULL, &child.args);
+	}
 	if (opts->quiet)
 		strvec_push(&child.args, "--quiet");
 	if (the_repository->settings.core_multi_pack_index)
