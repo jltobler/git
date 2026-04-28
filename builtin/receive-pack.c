@@ -2318,8 +2318,7 @@ static void push_header_arg(struct strvec *args, struct pack_header *hdr)
 		     ntohl(hdr->hdr_version), ntohl(hdr->hdr_entries));
 }
 
-static const char *unpack(int err_fd, struct shallow_info *si,
-			  struct odb_transaction *transaction)
+static const char *unpack(int err_fd, const char *shallow_file, struct odb_transaction *transaction)
 {
 	struct pack_header hdr;
 	const char *hdr_err;
@@ -2338,10 +2337,9 @@ static const char *unpack(int err_fd, struct shallow_info *si,
 		return hdr_err;
 	}
 
-	if (si->nr_ours || si->nr_theirs) {
-		alt_shallow_file = setup_temporary_shallow(si->shallow);
+	if (shallow_file) {
 		strvec_push(&child.args, "--shallow-file");
-		strvec_push(&child.args, alt_shallow_file);
+		strvec_push(&child.args, shallow_file);
 	}
 
 	strvec_pushv(&child.env, odb_transaction_env(transaction));
@@ -2417,8 +2415,11 @@ static const char *unpack_with_sideband(struct shallow_info *si,
 	struct async muxer;
 	const char *ret;
 
+	if (si->nr_ours || si->nr_theirs)
+		alt_shallow_file = setup_temporary_shallow(si->shallow);
+
 	if (!use_sideband)
-		return unpack(0, si, transaction);
+		return unpack(0, alt_shallow_file, transaction);
 
 	use_keepalive = KEEPALIVE_AFTER_NUL;
 	memset(&muxer, 0, sizeof(muxer));
@@ -2427,7 +2428,7 @@ static const char *unpack_with_sideband(struct shallow_info *si,
 	if (start_async(&muxer))
 		return NULL;
 
-	ret = unpack(muxer.in, si, transaction);
+	ret = unpack(muxer.in, alt_shallow_file, transaction);
 
 	finish_async(&muxer);
 	return ret;
