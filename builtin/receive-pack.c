@@ -2318,7 +2318,7 @@ static void push_header_arg(struct strvec *args, struct pack_header *hdr)
 		     ntohl(hdr->hdr_version), ntohl(hdr->hdr_entries));
 }
 
-static const char *unpack(int err_fd, const char *shallow_file, struct odb_transaction *transaction)
+static const char *unpack(int err_fd, const char *shallow_file, struct odb_transaction *transaction, int sideband)
 {
 	int unpack = 100;
 	struct pack_header hdr;
@@ -2384,7 +2384,7 @@ static const char *unpack(int err_fd, const char *shallow_file, struct odb_trans
 		// if (!quiet && err_fd)
 		if (err_fd)
 			strvec_push(&child.args, "--show-resolving-progress");
-		if (use_sideband)
+		if (sideband)
 			strvec_push(&child.args, "--report-end-of-input");
 		// if (fsck_objects)
 		// 	strvec_pushf(&child.args, "--strict%s",
@@ -2426,7 +2426,7 @@ static const char *unpack_with_sideband(struct shallow_info *si,
 		alt_shallow_file = setup_temporary_shallow(si->shallow);
 
 	if (!use_sideband)
-		return unpack(0, alt_shallow_file, transaction);
+		return unpack(0, alt_shallow_file, transaction, 0);
 
 	use_keepalive = KEEPALIVE_AFTER_NUL;
 	memset(&muxer, 0, sizeof(muxer));
@@ -2435,7 +2435,7 @@ static const char *unpack_with_sideband(struct shallow_info *si,
 	if (start_async(&muxer))
 		return NULL;
 
-	ret = unpack(muxer.in, alt_shallow_file, transaction);
+	ret = unpack(muxer.in, alt_shallow_file, transaction, 1);
 
 	finish_async(&muxer);
 	return ret;
