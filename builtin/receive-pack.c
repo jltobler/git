@@ -2318,9 +2318,9 @@ static void push_header_arg(struct strvec *args, struct pack_header *hdr)
 		     ntohl(hdr->hdr_version), ntohl(hdr->hdr_entries));
 }
 
-static const char *unpack(int err_fd, struct shallow_info *si)
+static const char *unpack(int err_fd, struct shallow_info *si,
+			  struct odb_transaction *transaction)
 {
-	struct odb_transaction *transaction;
 	struct pack_header hdr;
 	const char *hdr_err;
 	int status;
@@ -2344,12 +2344,6 @@ static const char *unpack(int err_fd, struct shallow_info *si)
 		strvec_push(&child.args, alt_shallow_file);
 	}
 
-	status = odb_transaction_begin(the_repository->objects, &transaction, ODB_TRANSACTION_RECEIVE);
-	if (status) {
-		if (err_fd > 0)
-			close(err_fd);
-		return "unable to start ODB transaction";
-	}
 	strvec_pushv(&child.env, odb_transaction_env(transaction));
 
 	if (ntohl(hdr.hdr_entries) < unpack_limit) {
@@ -2417,13 +2411,14 @@ static const char *unpack(int err_fd, struct shallow_info *si)
 	return NULL;
 }
 
-static const char *unpack_with_sideband(struct shallow_info *si)
+static const char *unpack_with_sideband(struct shallow_info *si,
+					struct odb_transaction *transaction)
 {
 	struct async muxer;
 	const char *ret;
 
 	if (!use_sideband)
-		return unpack(0, si);
+		return unpack(0, si, transaction);
 
 	use_keepalive = KEEPALIVE_AFTER_NUL;
 	memset(&muxer, 0, sizeof(muxer));
@@ -2432,7 +2427,7 @@ static const char *unpack_with_sideband(struct shallow_info *si)
 	if (start_async(&muxer))
 		return NULL;
 
-	ret = unpack(muxer.in, si);
+	ret = unpack(muxer.in, si, transaction);
 
 	finish_async(&muxer);
 	return ret;
@@ -2609,6 +2604,7 @@ int cmd_receive_pack(int argc,
 	struct oid_array ref = OID_ARRAY_INIT;
 	struct shallow_info si;
 	struct packet_reader reader;
+	struct odb_transaction *transaction;
 
 	struct option options[] = {
 		OPT__QUIET(&quiet, N_("quiet")),
@@ -2693,7 +2689,10 @@ int cmd_receive_pack(int argc,
 		if (!si.nr_ours && !si.nr_theirs)
 			shallow_update = 0;
 		if (!delete_only(commands)) {
-			unpack_status = unpack_with_sideband(&si);
+			if (odb_transaction_begin(the_repository->objects, &transaction, ODB_TRANSACTION_RECEIVE))
+				unpack_status = "unable to start ODB transaction";
+			else
+				unpack_status = unpack_with_sideband(&si, transaction);
 			update_shallow_info(commands, &si, &ref);
 		}
 		use_keepalive = KEEPALIVE_ALWAYS;
