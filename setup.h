@@ -167,6 +167,8 @@ int daemonize(void);
 struct repository_format {
 	int version;
 	int precious_objects;
+	char *object_directory;
+	char *alternate_object_directories;
 	char *partial_clone; /* value of extensions.partialclone */
 	int worktree_config;
 	int relative_worktrees;

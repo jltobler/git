@@ -763,6 +763,10 @@ static int check_repository_format_gently(struct repository *repo,
 	if (candidate->version < 0)
 		return 0;
 
+	candidate->object_directory = xstrdup_or_null(getenv(DB_ENVIRONMENT));
+	candidate->alternate_object_directories =
+		xstrdup_or_null(getenv(ALTERNATE_DB_ENVIRONMENT));
+
 	if (verify_repository_format(candidate, &err) < 0) {
 		if (nongit_ok) {
 			warning("%s", err.buf);
@@ -866,6 +870,8 @@ void clear_repository_format(struct repository_format *format)
 {
 	string_list_clear(&format->unknown_extensions, 0);
 	string_list_clear(&format->v1_only_extensions, 0);
+	free(format->object_directory);
+	free(format->alternate_object_directories);
 	free(format->work_tree);
 	free(format->partial_clone);
 	free(format->ref_storage_payload);
@@ -1748,6 +1754,8 @@ void apply_repository_format(struct repository *repo,
 	if (verify_repository_format(format, &err) < 0)
 		die("%s", err.buf);
 
+	repo->objects = odb_new(repo, format->object_directory,
+				format->alternate_object_directories);
 	repo_set_hash_algo(repo, format->hash_algo);
 	repo_set_compat_hash_algo(repo, format->compat_hash_algo);
 	repo_set_ref_storage_format(repo,
@@ -1858,15 +1866,8 @@ const char *enter_repo(struct repository *repo, const char *path, unsigned flags
 	}
 
 	if (is_git_directory(".")) {
-		struct strvec to_free = STRVEC_INIT;
-
 		set_git_dir(repo, ".", 0);
-		repo->objects = odb_new(repo,
-					getenv_safe(&to_free, DB_ENVIRONMENT),
-					getenv_safe(&to_free, ALTERNATE_DB_ENVIRONMENT));
 		check_and_apply_repository_format(repo, NULL);
-
-		strvec_clear(&to_free);
 		return path;
 	}
 
@@ -2028,9 +2029,6 @@ const char *setup_git_directory_gently(struct repository *repo, int *nongit_ok)
 		}
 
 		if (startup_info->have_repository) {
-			repo->objects = odb_new(repo,
-						getenv_safe(&to_free, DB_ENVIRONMENT),
-						getenv_safe(&to_free, ALTERNATE_DB_ENVIRONMENT));
 			apply_repository_format(repo, &repo_fmt);
 			clear_repository_format(&repo_fmt);
 		}
@@ -2784,7 +2782,6 @@ int init_db(struct repository *repo,
 	int exist_ok = flags & INIT_DB_EXIST_OK;
 	char *original_git_dir = real_pathdup(git_dir, 1);
 	struct repository_format repo_fmt = REPOSITORY_FORMAT_INIT;
-	struct strvec to_free = STRVEC_INIT;
 
 	if (real_git_dir) {
 		struct stat st;
@@ -2804,9 +2801,6 @@ int init_db(struct repository *repo,
 		git_dir = repo_get_git_dir(repo);
 	}
 	startup_info->have_repository = 1;
-
-	repo->objects = odb_new(repo, getenv_safe(&to_free, DB_ENVIRONMENT),
-				getenv_safe(&to_free, ALTERNATE_DB_ENVIRONMENT));
 
 	/*
 	 * Check to see if the repository version is right.
@@ -2871,7 +2865,6 @@ int init_db(struct repository *repo,
 	}
 
 	clear_repository_format(&repo_fmt);
-	strvec_clear(&to_free);
 	free(original_git_dir);
 	return 0;
 }

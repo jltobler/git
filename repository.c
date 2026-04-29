@@ -292,8 +292,6 @@ int repo_init(struct repository *repo,
 
 	apply_repository_format(repo, &format);
 
-	repo->objects = odb_new(repo, NULL, NULL);
-
 	if (worktree)
 		repo_set_worktree(repo, worktree);
 
