@@ -704,7 +704,14 @@ static enum extension_result handle_extension(const char *var,
 	} else if (!strcmp(ext, "submodulepathconfig")) {
 		data->submodule_path_cfg = git_config_bool(var, value);
 		return EXTENSION_OK;
+	} else if (!strcmp(ext, "objectstorage")) {
+		if (!value)
+			return config_error_nonbool(var);
+		free(data->object_storage);
+		data->object_storage = xstrdup(value);
+		return EXTENSION_OK;
 	}
+
 	return EXTENSION_UNKNOWN;
 }
 
@@ -875,6 +882,7 @@ void clear_repository_format(struct repository_format *format)
 	free(format->work_tree);
 	free(format->partial_clone);
 	free(format->ref_storage_payload);
+	free(format->object_storage);
 	init_repository_format(format);
 }
 
@@ -1750,11 +1758,13 @@ void apply_repository_format(struct repository *repo,
 			     const struct repository_format *format)
 {
 	struct strbuf err = STRBUF_INIT;
+	const char *primary_source = format->object_directory ?
+		format->object_directory : format->object_storage;
 
 	if (verify_repository_format(format, &err) < 0)
 		die("%s", err.buf);
 
-	repo->objects = odb_new(repo, format->object_directory,
+	repo->objects = odb_new(repo, primary_source,
 				format->alternate_object_directories);
 	repo_set_hash_algo(repo, format->hash_algo);
 	repo_set_compat_hash_algo(repo, format->compat_hash_algo);

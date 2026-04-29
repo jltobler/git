@@ -1,4 +1,5 @@
 #include "git-compat-util.h"
+#include "gettext.h"
 #include "object-file.h"
 #include "odb/source-files.h"
 #include "odb/source.h"
@@ -8,7 +9,27 @@ struct odb_source *odb_source_new(struct object_database *odb,
 				  const char *path,
 				  bool local)
 {
-	return &odb_source_files_new(odb, path, local)->base;
+	struct odb_source *source;
+	const char *schema_end;
+	char *schema;
+
+	schema_end = strstr(path, "://");
+	if (!schema_end)
+		return &odb_source_files_new(odb, path, local)->base;
+
+	schema = xstrndup(path, schema_end - path);
+	path = schema_end + 3;
+
+	if (!strcmp(schema, "files")) {
+		source = &odb_source_files_new(odb, path, local)->base;
+		goto out;
+	}
+
+	die(_("unknown object database source schema: '%s'"), schema);
+
+out:
+	free(schema);
+	return source;
 }
 
 void odb_source_init(struct odb_source *source,

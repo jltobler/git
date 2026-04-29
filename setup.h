@@ -180,6 +180,7 @@ struct repository_format {
 	char *ref_storage_payload;
 	int sparse_index;
 	char *work_tree;
+	char *object_storage;
 	struct string_list unknown_extensions;
 	struct string_list v1_only_extensions;
 };
