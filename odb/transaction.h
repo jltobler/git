@@ -10,8 +10,8 @@ struct odb_transaction_write_pack_opts {
 	const char *fsck_msg_types;
 	const char *shallow_file;
 	const char *error_msg;
-	off_t max_pack_size;
 	unsigned unpack_limit;
+	off_t max_pack_size;
 	int fsck_objects;
 	int reject_thin;
 	int err_fd;

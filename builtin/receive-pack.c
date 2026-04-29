@@ -2290,155 +2290,46 @@ static void read_push_options(struct packet_reader *reader,
 	}
 }
 
-static const char *parse_pack_header(struct pack_header *hdr)
-{
-	switch (read_pack_header(0, hdr)) {
-	case PH_ERROR_EOF:
-		return "eof before pack header was fully read";
-
-	case PH_ERROR_PACK_SIGNATURE:
-		return "protocol error (pack signature mismatch detected)";
-
-	case PH_ERROR_PROTOCOL:
-		return "protocol error (pack version unsupported)";
-
-	default:
-		return "unknown error in parse_pack_header";
-
-	case 0:
-		return NULL;
-	}
-}
-
-static struct tempfile *pack_lockfile;
-
-static void push_header_arg(struct strvec *args, struct pack_header *hdr)
-{
-	strvec_pushf(args, "--pack_header=%"PRIu32",%"PRIu32,
-		     ntohl(hdr->hdr_version), ntohl(hdr->hdr_entries));
-}
-
-static const char *unpack(int err_fd, const char *shallow_file, struct odb_transaction *transaction, int sideband)
-{
-	int unpack = 100;
-	struct pack_header hdr;
-	const char *hdr_err;
-	int status;
-	struct child_process child = CHILD_PROCESS_INIT;
-	// int fsck_objects = (receive_fsck_objects >= 0
-	// 		    ? receive_fsck_objects
-	// 		    : transfer_fsck_objects >= 0
-	// 		    ? transfer_fsck_objects
-	// 		    : 0);
-
-	hdr_err = parse_pack_header(&hdr);
-	if (hdr_err) {
-		if (err_fd > 0)
-			close(err_fd);
-		return hdr_err;
-	}
-
-	if (shallow_file) {
-		strvec_push(&child.args, "--shallow-file");
-		strvec_push(&child.args, shallow_file);
-	}
-
-	strvec_pushv(&child.env, odb_transaction_env(transaction));
-
-	/* 
-	 * TODO: The unpack limit is going to be specific to the files backend.
-	 * We should eventually properly read this configuration. For now
-	 * though we just ignore it and force the default value of 100.
-	 */
-	if (ntohl(hdr.hdr_entries) < unpack) {
-		strvec_push(&child.args, "unpack-objects");
-		push_header_arg(&child.args, &hdr);
-		// if (quiet)
-		// 	strvec_push(&child.args, "-q");
-		// if (fsck_objects)
-		// 	strvec_pushf(&child.args, "--strict%s",
-		// 		     fsck_msg_types.buf);
-		// if (max_input_size)
-		// 	strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX,
-		// 		     (uintmax_t)max_input_size);
-		child.no_stdout = 1;
-		child.err = err_fd;
-		child.git_cmd = 1;
-		status = run_command(&child);
-		if (status)
-			return "unpack-objects abnormal exit";
-	} else {
-		char hostname[HOST_NAME_MAX + 1];
-		char *lockfile;
-
-		strvec_pushl(&child.args, "index-pack", "--stdin", NULL);
-		push_header_arg(&child.args, &hdr);
-
-		if (xgethostname(hostname, sizeof(hostname)))
-			xsnprintf(hostname, sizeof(hostname), "localhost");
-		strvec_pushf(&child.args,
-			     "--keep=receive-pack %"PRIuMAX" on %s",
-			     (uintmax_t)getpid(),
-			     hostname);
-
-		// if (!quiet && err_fd)
-		if (err_fd)
-			strvec_push(&child.args, "--show-resolving-progress");
-		if (sideband)
-			strvec_push(&child.args, "--report-end-of-input");
-		// if (fsck_objects)
-		// 	strvec_pushf(&child.args, "--strict%s",
-		// 		     fsck_msg_types.buf);
-		// if (!reject_thin)
-		strvec_push(&child.args, "--fix-thin");
-		// if (max_input_size)
-		// 	strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX,
-		// 		     (uintmax_t)max_input_size);
-		child.out = -1;
-		child.err = err_fd;
-		child.git_cmd = 1;
-		status = start_command(&child);
-		if (status)
-			return "index-pack fork failed";
-
-		lockfile = index_pack_lockfile(the_repository, child.out, NULL);
-		if (lockfile) {
-			pack_lockfile = register_tempfile(lockfile);
-			free(lockfile);
-		}
-		close(child.out);
-
-		status = finish_command(&child);
-		if (status)
-			return "index-pack abnormal exit";
-		odb_reprepare(the_repository->objects);
-	}
-	return NULL;
-}
-
 static const char *unpack_with_sideband(struct shallow_info *si,
 					struct odb_transaction *transaction)
 {
+	struct odb_transaction_write_pack_opts opts = {
+		.fsck_msg_types = fsck_msg_types.buf,
+		.max_pack_size = max_input_size,
+		.unpack_limit = unpack_limit,
+		.reject_thin = reject_thin,
+		.quiet = quiet,
+	};
 	struct async muxer;
-	const char *ret;
 
-	if (si->nr_ours || si->nr_theirs)
+	opts.fsck_objects = (receive_fsck_objects >= 0
+			  ? receive_fsck_objects
+			  : transfer_fsck_objects >= 0
+			  ? transfer_fsck_objects
+			  : 0);
+
+	if (si->nr_ours || si->nr_theirs) {
 		alt_shallow_file = setup_temporary_shallow(si->shallow);
+		opts.shallow_file = alt_shallow_file;
+	}
 
-	if (!use_sideband)
-		return unpack(0, alt_shallow_file, transaction, 0);
+	if (!use_sideband) {
+		odb_transaction_write_pack(transaction, 0, &opts);
+		return opts.error_msg;
+	}
 
 	use_keepalive = KEEPALIVE_AFTER_NUL;
 	memset(&muxer, 0, sizeof(muxer));
 	muxer.proc = copy_to_sideband;
 	muxer.in = -1;
 	if (start_async(&muxer))
-		return NULL;
+		return 0;
 
-	ret = unpack(muxer.in, alt_shallow_file, transaction, 1);
+	opts.err_fd = muxer.in;
+	odb_transaction_write_pack(transaction, 0, &opts);
 
 	finish_async(&muxer);
-	return ret;
+	return opts.error_msg;
 }
 
 static void prepare_shallow_update(struct shallow_info *si)
@@ -2706,7 +2597,6 @@ int cmd_receive_pack(int argc,
 		use_keepalive = KEEPALIVE_ALWAYS;
 		execute_commands(commands, unpack_status, &si,
 				 &push_options);
-		delete_tempfile(&pack_lockfile);
 		sigchain_push(SIGPIPE, SIG_IGN);
 		if (report_status_v2)
 			report_v2(commands, unpack_status);
