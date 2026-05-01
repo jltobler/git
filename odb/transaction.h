@@ -1,8 +1,9 @@
 #ifndef ODB_TRANSACTION_H
 #define ODB_TRANSACTION_H
 
+#include "git-compat-util.h"
+#include "gettext.h"
 #include "odb.h"
-#include "odb/source.h"
 
 /*
  * A transaction may be started for an object database prior to writing new
@@ -17,7 +18,7 @@ struct odb_transaction {
 	struct odb_source *source;
 
 	/* The ODB source specific callback invoked to commit a transaction. */
-	void (*commit)(struct odb_transaction *transaction);
+	int (*commit)(struct odb_transaction *transaction);
 
 	/*
 	 * This callback is expected to write the given object stream into
@@ -30,6 +31,12 @@ struct odb_transaction {
 	int (*write_object_stream)(struct odb_transaction *transaction,
 				   struct odb_write_stream *stream, size_t len,
 				   struct object_id *oid);
+
+	const char **(*env)(struct odb_transaction *transaction);
+};
+
+enum odb_transaction_flags {
+	ODB_TRANSACTION_RECEIVE = (1 << 0),
 };
 
 /*
@@ -37,13 +44,23 @@ struct odb_transaction {
  * and not committed until odb_transaction_commit() is invoked on the
  * transaction. If the ODB already has a pending transaction, NULL is returned.
  */
-struct odb_transaction *odb_transaction_begin(struct object_database *odb);
+int odb_transaction_begin(struct object_database *odb,
+			  struct odb_transaction **out,
+			  enum odb_transaction_flags flags);
+
+static inline void odb_transaction_begin_or_die(struct object_database *odb,
+						struct odb_transaction **out,
+						enum odb_transaction_flags flags)
+{
+	if (odb_transaction_begin(odb, out, flags))
+		die(_("failed to start ODB transaction"));
+}
 
 /*
  * Commits an ODB transaction making the written objects visible. If the
  * specified transaction is NULL, the function is a no-op.
  */
-void odb_transaction_commit(struct odb_transaction *transaction);
+int odb_transaction_commit(struct odb_transaction *transaction);
 
 /*
  * Writes the object in the provided stream into the transaction. The resulting
@@ -53,5 +70,7 @@ void odb_transaction_commit(struct odb_transaction *transaction);
 int odb_transaction_write_object_stream(struct odb_transaction *transaction,
 					struct odb_write_stream *stream,
 					size_t len, struct object_id *oid);
+
+const char **odb_transaction_env(struct odb_transaction *transaction);
 
 #endif

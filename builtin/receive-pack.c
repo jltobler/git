@@ -112,8 +112,6 @@ static enum {
 } use_keepalive;
 static int keepalive_in_sec = 5;
 
-static struct tmp_objdir *tmp_objdir;
-
 static struct proc_receive_ref {
 	unsigned int want_add:1,
 		     want_delete:1,
@@ -959,8 +957,8 @@ static int run_receive_hook(struct command *commands,
 		strvec_push(&opt.env, "GIT_PUSH_OPTION_COUNT");
 	}
 
-	if (tmp_objdir)
-		strvec_pushv(&opt.env, tmp_objdir_env(tmp_objdir));
+	if (the_repository->objects->transaction)
+		strvec_pushv(&opt.env, odb_transaction_env(the_repository->objects->transaction));
 
 	prepare_push_cert_sha1(&opt);
 
@@ -1363,7 +1361,7 @@ static int update_shallow_ref(struct command *cmd, struct shallow_info *si)
 		    !delayed_reachability_test(si, i))
 			oid_array_append(&extra, &si->shallow->oid[i]);
 
-	opt.env = tmp_objdir_env(tmp_objdir);
+	opt.env = odb_transaction_env(the_repository->objects->transaction);
 	setup_alternate_shallow(&shallow_lock, &opt.shallow_file, &extra);
 	if (check_connected(command_singleton_iterator, cmd, &opt)) {
 		rollback_shallow_file(the_repository, &shallow_lock);
@@ -1797,7 +1795,7 @@ static void set_connectivity_errors(struct command *commands,
 			/* to be checked in update_shallow_ref() */
 			continue;
 
-		opt.env = tmp_objdir_env(tmp_objdir);
+		opt.env = odb_transaction_env(the_repository->objects->transaction);
 		if (!check_connected(command_singleton_iterator, &singleton,
 				     &opt))
 			continue;
@@ -2052,7 +2050,7 @@ static void execute_commands(struct command *commands,
 		data.si = si;
 		opt.err_fd = err_fd;
 		opt.progress = err_fd && !quiet;
-		opt.env = tmp_objdir_env(tmp_objdir);
+		opt.env = odb_transaction_env(the_repository->objects->transaction);
 		opt.exclude_hidden_refs_section = "receive";
 
 		if (check_connected(iterate_receive_command_list, &data, &opt))
@@ -2101,14 +2099,13 @@ static void execute_commands(struct command *commands,
 	 * Now we'll start writing out refs, which means the objects need
 	 * to be in their final positions so that other processes can see them.
 	 */
-	if (tmp_objdir_migrate(tmp_objdir) < 0) {
+	if (odb_transaction_commit(the_repository->objects->transaction)) {
 		for (cmd = commands; cmd; cmd = cmd->next) {
 			if (!cmd->error_string)
 				cmd->error_string = "unable to migrate objects to permanent storage";
 		}
 		return;
 	}
-	tmp_objdir = NULL;
 
 	check_aliased_updates(commands);
 
@@ -2323,6 +2320,7 @@ static void push_header_arg(struct strvec *args, struct pack_header *hdr)
 
 static const char *unpack(int err_fd, struct shallow_info *si)
 {
+	struct odb_transaction *transaction;
 	struct pack_header hdr;
 	const char *hdr_err;
 	int status;
@@ -2346,20 +2344,13 @@ static const char *unpack(int err_fd, struct shallow_info *si)
 		strvec_push(&child.args, alt_shallow_file);
 	}
 
-	tmp_objdir = tmp_objdir_create(the_repository, "incoming");
-	if (!tmp_objdir) {
+	status = odb_transaction_begin(the_repository->objects, &transaction, ODB_TRANSACTION_RECEIVE);
+	if (status) {
 		if (err_fd > 0)
 			close(err_fd);
-		return "unable to create temporary object directory";
+		return "unable to start ODB transaction";
 	}
-	strvec_pushv(&child.env, tmp_objdir_env(tmp_objdir));
-
-	/*
-	 * Normally we just pass the tmp_objdir environment to the child
-	 * processes that do the heavy lifting, but we may need to see these
-	 * objects ourselves to set up shallow information.
-	 */
-	tmp_objdir_add_as_alternate(tmp_objdir);
+	strvec_pushv(&child.env, odb_transaction_env(transaction));
 
 	if (ntohl(hdr.hdr_entries) < unpack_limit) {
 		strvec_push(&child.args, "unpack-objects");
