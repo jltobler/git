@@ -310,14 +310,47 @@ out:
 	return ret;
 }
 
+static int s3_write_pending_pack(struct odb_source_s3 *s3,
+				 struct s3_pending_pack *pending)
+{
+	const char *pack_basename, *idx_basename, *rev_basename;
+	struct strbuf key = STRBUF_INIT;
+	int ret = 0;
+
+	pack_basename = strrchr(pending->pack_path, '/') + 1;
+	s3_key(s3->storage, &key, pending->pack_path + strlen(s3->storage->cache_dir) + 1);
+	if (s3_put_from_file(s3->storage, key.buf, pending->pack_path) < 0) {
+		ret = error("failed uploading pack '%s'", pack_basename);
+		goto out;
+	}
+
+	idx_basename = strrchr(pending->idx_path, '/') + 1;
+	s3_key(s3->storage, &key, pending->idx_path + strlen(s3->storage->cache_dir) + 1);
+	if (s3_put_from_file(s3->storage, key.buf, pending->idx_path) < 0) {
+		ret = error("failed uploading index '%s'", idx_basename);
+		goto out;
+	}
+
+	rev_basename = strrchr(pending->rev_path, '/') + 1;
+	s3_key(s3->storage, &key, pending->rev_path + strlen(s3->storage->cache_dir) + 1);
+	if (s3_put_from_file(s3->storage, key.buf, pending->rev_path) < 0) {
+		ret = error("failed uploading reverse index '%s'", rev_basename);
+		goto out;
+	}
+
+out:
+	strbuf_release(&key);
+
+	return ret;
+}
+
 static int write_objects(struct odb_source_s3 *s3,
 			 struct s3_pending_object *objects,
 			 size_t objects_nr)
 {
 	struct s3_pending_pack pending_pack = { 0 };
-	const char *pack_basename, *idx_basename, *rev_basename, *hash_end;
 	struct s3_manifest new_manifest = S3_MANIFEST_INIT;
-	struct strbuf key = STRBUF_INIT;
+	const char *pack_basename, *hash_end;
 	int ret = 0;
 
 	if (!objects_nr)
@@ -329,30 +362,15 @@ static int write_objects(struct odb_source_s3 *s3,
 	}
 
 	/* Upload the .pack and .idx to S3. */
-	pack_basename = strrchr(pending_pack.pack_path, '/') + 1;
-	s3_key(s3->storage, &key, pending_pack.pack_path + strlen(s3->storage->cache_dir) + 1);
-	if (s3_put_from_file(s3->storage, key.buf, pending_pack.pack_path) < 0) {
-		ret = error("failed uploading pack '%s'", pack_basename);
-		goto out;
-	}
-
-	idx_basename = strrchr(pending_pack.idx_path, '/') + 1;
-	s3_key(s3->storage, &key, pending_pack.idx_path + strlen(s3->storage->cache_dir) + 1);
-	if (s3_put_from_file(s3->storage, key.buf, pending_pack.idx_path) < 0) {
-		ret = error("failed uploading index '%s'", idx_basename);
-		goto out;
-	}
-
-	rev_basename = strrchr(pending_pack.rev_path, '/') + 1;
-	s3_key(s3->storage, &key, pending_pack.rev_path + strlen(s3->storage->cache_dir) + 1);
-	if (s3_put_from_file(s3->storage, key.buf, pending_pack.rev_path) < 0) {
-		ret = error("failed uploading reverse index '%s'", rev_basename);
+	if (s3_write_pending_pack(s3, &pending_pack) < 0) {
+		ret = -1;
 		goto out;
 	}
 
 	/* Fetch the current manifest, append the hash, re-upload. */
 	s3_manifest_copy(s3_storage_get_manifest(s3->storage), &new_manifest);
 
+	pack_basename = strrchr(pending_pack.pack_path, '/') + 1;
 	hash_end = strrchr(pack_basename, '.');
 	string_list_append_nodup(&new_manifest.packs,
 				 xstrndup(pack_basename, hash_end - pack_basename));
@@ -367,7 +385,6 @@ static int write_objects(struct odb_source_s3 *s3,
 
 out:
 	s3_manifest_release(&new_manifest);
-	strbuf_release(&key);
 	s3_pending_pack_release(&pending_pack);
 
 	return ret;
