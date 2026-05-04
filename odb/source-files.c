@@ -4,12 +4,8 @@
 #include "chdir-notify.h"
 #include "config.h"
 #include "gettext.h"
-<<<<<<< HEAD
 #include "hex.h"
-||||||| 00ba2a7188
-=======
 #include "hook.h"
->>>>>>> pks-odb-optimize
 #include "lockfile.h"
 #include "object-file.h"
 #include "object-file-convert.h"
@@ -277,15 +273,12 @@ out:
 	return ret;
 }
 
-<<<<<<< HEAD
 static int odb_source_files_get_packs(struct odb_source *source, struct packfile_list_entry **out)
 {
 	struct odb_source_files *files = odb_source_files_downcast(source);
 	return odb_source_get_packs(&files->packed->base, out);
 }
 
-||||||| 00ba2a7188
-=======
 static int too_many_loose_objects(struct odb_source_files *files, int limit)
 {
 	unsigned long loose_count;
@@ -746,7 +739,19 @@ out:
 	return ret;
 }
 
->>>>>>> pks-odb-optimize
+static int odb_source_files_fsck(struct odb_source *source,
+				 struct odb_fsck_options *opts)
+{
+	struct odb_source_files *files = odb_source_files_downcast(source);
+	int ret = 0;
+
+	ret |= odb_source_fsck(&files->loose->base, opts);
+	if (opts->flags & ODB_FSCK_FULL)
+		ret |= odb_source_fsck(&files->packed->base, opts);
+
+	return ret;
+}
+
 struct odb_source_files *odb_source_files_new(struct object_database *odb,
 					      const char *path,
 					      bool local)
@@ -775,6 +780,7 @@ struct odb_source_files *odb_source_files_new(struct object_database *odb,
 	files->base.get_packs = odb_source_files_get_packs;
 	files->base.optimize = odb_source_files_optimize;
 	files->base.optimize_required = odb_source_files_optimize_required;
+	files->base.fsck = odb_source_files_fsck;
 
 	/*
 	 * Ideally, we would only ever store absolute paths in the source. This

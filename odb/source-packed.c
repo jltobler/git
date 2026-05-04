@@ -2,12 +2,18 @@
 #include "abspath.h"
 #include "chdir-notify.h"
 #include "dir.h"
+#include "fsck.h"
 #include "git-zlib.h"
 #include "mergesort.h"
 #include "midx.h"
 #include "odb/source-packed.h"
 #include "odb/streaming.h"
+#include "pack.h"
+#include "pack-bitmap.h"
+#include "pack-revindex.h"
 #include "packfile.h"
+#include "progress.h"
+#include "run-command.h"
 
 static int find_pack_entry(struct odb_source_packed *store,
 			   const struct object_id *oid,
@@ -749,6 +755,106 @@ static int odb_source_packed_get_packs(struct odb_source *source, struct packfil
 	return 0;
 }
 
+static int verify_reverse_indices(struct odb_source_packed *source,
+				  struct odb_fsck_options *opts)
+{
+	struct progress *progress = NULL;
+	struct packfile_list_entry *e;
+	uint32_t pack_count = 0;
+	int res = 0;
+
+	if (opts->flags & ODB_FSCK_PROGRESS) {
+		for (e = packfile_store_get_packs(source); e; e = e->next)
+			pack_count++;
+		progress = start_delayed_progress(source->base.odb->repo,
+						  "Verifying reverse pack-indexes", pack_count);
+		pack_count = 0;
+	}
+
+	for (e = packfile_store_get_packs(source); e; e = e->next) {
+		int load_error = load_pack_revindex_from_disk(e->pack);
+
+		if (load_error < 0) {
+			error(_("unable to load rev-index for pack '%s'"), e->pack->pack_name);
+			res = -1;
+		} else if (!load_error &&
+			   !load_pack_revindex(source->base.odb->repo, e->pack) &&
+			   verify_pack_revindex(e->pack)) {
+			error(_("invalid rev-index for pack '%s'"), e->pack->pack_name);
+			res = -1;
+		}
+		display_progress(progress, ++pack_count);
+	}
+	stop_progress(&progress);
+
+	return res;
+}
+
+static int verify_midx(struct odb_source_packed *source,
+		       struct odb_fsck_options *opts)
+{
+	struct child_process midx_verify = CHILD_PROCESS_INIT;
+	int ret = 0;
+
+	if (!source->base.odb->repo->settings.core_multi_pack_index)
+		return 0;
+
+	child_process_init(&midx_verify);
+	midx_verify.git_cmd = 1;
+	strvec_pushl(&midx_verify.args, "multi-pack-index",
+		     "verify", "--object-dir", source->base.path, NULL);
+	if (opts->flags & ODB_FSCK_PROGRESS)
+		strvec_push(&midx_verify.args, "--progress");
+	else
+		strvec_push(&midx_verify.args, "--no-progress");
+	if (run_command(&midx_verify))
+		ret = -1;
+
+	return ret;
+}
+
+static int odb_source_packed_fsck(struct odb_source *source,
+				  struct odb_fsck_options *opts)
+{
+	struct odb_source_packed *packed = odb_source_packed_downcast(source);
+	struct progress *progress = NULL;
+	struct packfile_list_entry *e;
+	uint32_t total = 0, count = 0;
+	int ret = 0;
+
+	if (opts->flags & ODB_FSCK_PROGRESS) {
+		for (e = packfile_store_get_packs(packed); e; e = e->next) {
+			if (open_pack_index(e->pack))
+				continue;
+			total += e->pack->num_objects;
+		}
+
+		progress = start_progress(source->odb->repo,
+					  _("Checking objects"), total);
+	}
+
+	for (e = packfile_store_get_packs(packed); e; e = e->next) {
+		/* verify gives error messages itself */
+		if (verify_pack(source->odb->repo, e->pack,
+				opts->object_cb, opts->object_payload,
+				progress, count))
+			ret = -1;
+		count += e->pack->num_objects;
+	}
+	stop_progress(&progress);
+
+	if (verify_reverse_indices(packed, opts) < 0)
+		ret = -1;
+
+	if (verify_bitmap_files(packed))
+		ret = -1;
+
+	if (verify_midx(packed, opts) < 0)
+		ret = -1;
+
+	return ret;
+}
+
 struct odb_source_packed *odb_source_packed_new(struct object_database *odb,
 						const char *path,
 						bool local)
@@ -774,6 +880,7 @@ struct odb_source_packed *odb_source_packed_new(struct object_database *odb,
 	packed->base.read_alternates = odb_source_packed_read_alternates;
 	packed->base.write_alternate = odb_source_packed_write_alternate;
 	packed->base.get_packs = odb_source_packed_get_packs;
+	packed->base.fsck = odb_source_packed_fsck;
 
 	if (!is_absolute_path(path))
 		chdir_notify_register(NULL, odb_source_packed_reparent, packed);
