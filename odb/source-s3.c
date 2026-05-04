@@ -484,6 +484,8 @@ struct odb_transaction_s3 {
 	struct s3_manifest manifest;
 	struct s3_pending_object *objects;
 	size_t objects_nr, objects_alloc;
+	struct s3_pending_pack *packs;
+	size_t packs_nr, packs_alloc;
 };
 
 static int odb_transaction_s3_commit(struct odb_transaction *base)
@@ -493,6 +495,9 @@ static int odb_transaction_s3_commit(struct odb_transaction *base)
 		container_of(base, struct odb_transaction_s3, base);
 	const char *hash_end;
 	int ret = 0;
+
+	if (!tx->objects_nr && !tx->packs_nr)
+		goto out;
 
 	if (tx->objects_nr) {
 		if (write_pending_to_pack(tx->s3, tx->objects, tx->objects_nr, &objects_pack) < 0) {
@@ -507,15 +512,27 @@ static int odb_transaction_s3_commit(struct odb_transaction *base)
 
 		hash_end = strrchr(objects_pack.pack_basename, '.');
 		string_list_append_nodup(&tx->manifest.packs, xstrndup(objects_pack.pack_basename, hash_end - objects_pack.pack_basename));
+	}
 
-		if (s3_storage_update_manifest(tx->s3->storage, &tx->manifest) < 0) {
-			ret = -1;
-			goto out;
-		}
+	/*
+	 * At time of commit, packfiles in the transaction are expected to
+	 * already be written in the s3 cache and transaction manifest.
+	 */
+	for (size_t i = 0; i < tx->packs_nr; i++)
+		s3_write_pending_pack(tx->s3, &tx->packs[i]);
 
+	if (s3_storage_update_manifest(tx->s3->storage, &tx->manifest) < 0) {
+		ret = -1;
+		goto out;
+	}
+
+	if (tx->objects_nr)
 		if (!packfile_store_load_pack(tx->s3->packed, objects_pack.idx_path, 1))
 			die("s3: failed to activate newly written pack '%s'", objects_pack.pack_basename);
-	}
+
+	for (size_t i = 0; i < tx->packs_nr; i++)
+		if (!packfile_store_load_pack(tx->s3->packed, tx->packs[i].idx_path, 1))
+			die("s3: failed to activate newly written pack '%s'", tx->packs[i].pack_basename);
 
 out:
 	s3_manifest_release(&tx->manifest);
@@ -523,6 +540,10 @@ out:
 	for (size_t i = 0; i < tx->objects_nr; i++)
 		free(tx->objects[i].data);
 	free(tx->objects);
+
+	for (size_t i = 0; i < tx->packs_nr; i++)
+		s3_pending_pack_release(&tx->packs[i]);
+	free(tx->packs);
 
 	return ret;
 }
