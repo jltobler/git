@@ -19,6 +19,7 @@
 #include "packfile.h"
 #include "path.h"
 #include "repository.h"
+#include "run-command.h"
 #include "strbuf.h"
 #include "string-list.h"
 #include "s3.h"
@@ -577,6 +578,110 @@ static int odb_transaction_s3_write_object_stream(struct odb_transaction *base,
 	return 0;
 }
 
+static char *read_pack_hash(struct repository *repo, int output_fd)
+{
+	char packname[GIT_MAX_HEXSZ + 6];
+	const int len = repo->hash_algo->hexsz + 6;
+
+	if (read_in_full(output_fd, packname, len) == len && packname[len-1] == '\n') {
+		const char *name;
+
+		packname[len-1] = 0;
+		if (skip_prefix(packname, "pack\t", &name))
+			return xstrfmt("%s", name);
+		return NULL;
+	}
+
+	return NULL;
+}
+
+static int odb_transaction_s3_write_pack(struct odb_transaction *base, int fd,
+					 struct odb_transaction_write_pack_opts *opts)
+{
+	struct odb_transaction_s3 *tx = container_of(base, struct odb_transaction_s3, base);
+	struct repository *repo = tx->s3->base.odb->repo;
+	struct child_process child = CHILD_PROCESS_INIT;
+	char *tmp_pack_path = NULL, *tmp_idx_path = NULL, *tmp_rev_path = NULL;
+	char *pack_path = NULL, *idx_path = NULL, *rev_path = NULL;
+	char *hash = NULL;
+	int ret = 0;
+
+	/* TODO: The names here should include a suffix to prevent collisions. */
+	tmp_pack_path = xstrfmt("%s/packs/tmp_pack.pack", tx->s3->storage->cache_dir);
+	tmp_idx_path = xstrfmt("%s/packs/tmp_pack.idx", tx->s3->storage->cache_dir);
+	tmp_rev_path = xstrfmt("%s/packs/tmp_pack.rev", tx->s3->storage->cache_dir);
+
+	strvec_pushl(&child.args, "index-pack", "--stdin", tmp_pack_path, NULL);
+
+	if (opts->shallow_file) {
+		strvec_push(&child.args, "--shallow-file");
+		strvec_push(&child.args, opts->shallow_file);
+	}
+
+	if (opts->fsck_objects)
+		strvec_pushf(&child.args, "--strict%s", opts->fsck_msg_types ? opts->fsck_msg_types : "");
+	if (!opts->reject_thin)
+		strvec_push(&child.args, "--fix-thin");
+	if (opts->max_pack_size)
+		strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX, (uintmax_t)opts->max_pack_size);
+	strvec_push(&child.args, "--rev-index");
+
+	child.out = -1;
+	child.in = fd;
+	child.err = opts->err_fd;
+	child.git_cmd = 1;
+
+	if (start_command(&child)) {
+		opts->error_msg = "index-pack fork failed";
+		ret = -1;
+		goto out;
+	}
+
+	hash = read_pack_hash(repo, child.out);
+	if (!hash) {
+		ret = -1;
+		goto out;
+	}
+	close(child.out);
+
+	if (finish_command(&child)) {
+		opts->error_msg = "index-pack abnormal exit";
+		ret = -1;
+		goto out;
+	}
+
+	pack_path = xstrfmt("%s/packs/%s.pack", tx->s3->storage->cache_dir, hash);
+	idx_path = xstrfmt("%s/packs/%s.idx", tx->s3->storage->cache_dir, hash);
+	rev_path = xstrfmt("%s/packs/%s.rev", tx->s3->storage->cache_dir, hash);
+
+	rename(tmp_pack_path, pack_path);
+	rename(tmp_idx_path, idx_path);
+	rename(tmp_rev_path, rev_path);
+
+	ALLOC_GROW(tx->packs, tx->packs_nr + 1, tx->packs_alloc);
+	tx->packs[tx->packs_nr].pack_path = pack_path;
+	tx->packs[tx->packs_nr].idx_path = idx_path;
+	tx->packs[tx->packs_nr].rev_path = rev_path;
+	tx->packs[tx->packs_nr].pack_basename = xstrdup(strrchr(tx->packs[tx->packs_nr].pack_path, '/') + 1);
+	tx->packs_nr++;
+
+	pack_path = NULL;
+	idx_path = NULL;
+	rev_path = NULL;
+
+	/* Write the packfile to the transaction manifest. */
+	string_list_append_nodup(&tx->manifest.packs, xstrdup(hash));
+
+out:
+	free(tmp_pack_path);
+	free(tmp_idx_path);
+	free(tmp_rev_path);
+	free(pack_path);
+	free(idx_path);
+	free(rev_path);
+	return ret;
+}
+
 static const char **odb_transaction_s3_env(struct odb_transaction *base)
 {
 	struct odb_transaction_s3 *tx = container_of(base, struct odb_transaction_s3, base);
@@ -602,6 +707,7 @@ static int odb_source_s3_begin_transaction(struct odb_source *source,
 	tx->base.source = source;
 	tx->base.commit = odb_transaction_s3_commit;
 	tx->base.write_object_stream = odb_transaction_s3_write_object_stream;
+	tx->base.write_pack = odb_transaction_s3_write_pack;
 	tx->base.env = odb_transaction_s3_env;
 	tx->manifest = manifest;
 
