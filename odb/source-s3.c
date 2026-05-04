@@ -488,18 +488,43 @@ struct odb_transaction_s3 {
 
 static int odb_transaction_s3_commit(struct odb_transaction *base)
 {
+	struct s3_pending_pack objects_pack = { 0 };
 	struct odb_transaction_s3 *tx =
 		container_of(base, struct odb_transaction_s3, base);
+	const char *hash_end;
+	int ret = 0;
 
-	if (write_objects(tx->s3, tx->objects, tx->objects_nr) < 0)
-		die("s3: failed to flush objects on transaction commit");
+	if (tx->objects_nr) {
+		if (write_pending_to_pack(tx->s3, tx->objects, tx->objects_nr, &objects_pack) < 0) {
+			ret = -1;
+			goto out;
+		}
 
+		if (s3_write_pending_pack(tx->s3, &objects_pack) < 0) {
+			ret = -1;
+			goto out;
+		}
+
+		hash_end = strrchr(objects_pack.pack_basename, '.');
+		string_list_append_nodup(&tx->manifest.packs, xstrndup(objects_pack.pack_basename, hash_end - objects_pack.pack_basename));
+
+		if (s3_storage_update_manifest(tx->s3->storage, &tx->manifest) < 0) {
+			ret = -1;
+			goto out;
+		}
+
+		if (!packfile_store_load_pack(tx->s3->packed, objects_pack.idx_path, 1))
+			die("s3: failed to activate newly written pack '%s'", objects_pack.pack_basename);
+	}
+
+out:
 	s3_manifest_release(&tx->manifest);
+	s3_pending_pack_release(&objects_pack);
 	for (size_t i = 0; i < tx->objects_nr; i++)
 		free(tx->objects[i].data);
 	free(tx->objects);
 
-	return 0;
+	return ret;
 }
 
 static int odb_transaction_s3_write_object_stream(struct odb_transaction *base,
