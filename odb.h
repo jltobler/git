@@ -117,6 +117,42 @@ struct object_database *odb_new(struct repository *repo,
 /* Free the object database and release all resources. */
 void odb_free(struct object_database *o);
 
+enum odb_optimize_strategy {
+	ODB_OPTIMIZE_INCREMENTAL,
+	ODB_OPTIMIZE_GEOMETRIC,
+};
+
+struct odb_optimize_options {
+	enum odb_optimize_strategy strategy;
+	const char *prune_expire;
+	const char *expire_to;
+	int no_reuse_deltas;
+	int depth;
+	int window;
+	int quiet;
+	int auto_maintenance;
+
+	/* Backend-specific options. */
+	int keep_largest_pack;
+	int cruft_packs;
+	unsigned long max_cruft_size;
+};
+
+/*
+ * Optimize the object database. Returns 0 on success, a negative error code
+ * otherwise.
+ */
+int odb_optimize(struct object_database *odb,
+		 const struct odb_optimize_options *opts);
+
+/*
+ * Check whether optimization of the object database is required given the
+ * provided options. Returns true if optimization should be performed, false
+ * otherwise.
+ */
+bool odb_optimize_required(struct object_database *odb,
+			   const struct odb_optimize_options *opts);
+
 /*
  * Close the object database and all of its sources so that any held resources
  * will be released. The database can still be used after closing it, in which

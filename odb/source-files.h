@@ -26,6 +26,21 @@ int odb_source_files_force_object_loose(struct odb_source *source,
 					const time_t *mtime);
 
 /*
+ * Optimize the files object database source by repacking loose objects and
+ * packfiles as needed. Returns 0 on success, a negative error code otherwise.
+ */
+int odb_source_files_optimize(struct odb_source *source,
+			      const struct odb_optimize_options *opts);
+
+/*
+ * Check whether optimization of the files object database source is required
+ * given the provided options. Returns true if optimization should be
+ * performed, false otherwise.
+ */
+bool odb_source_files_optimize_required(struct odb_source *source,
+					const struct odb_optimize_options *opts);
+
+/*
  * Cast the given object database source to the files backend. This will cause
  * a BUG in case the source doesn't use this backend.
  */
