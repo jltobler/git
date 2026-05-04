@@ -1304,6 +1304,9 @@ LIB_OBJS += reset.o
 LIB_OBJS += resolve-undo.o
 LIB_OBJS += revision.o
 LIB_OBJS += run-command.o
+ifndef NO_CURL
+LIB_OBJS += s3.o
+endif
 LIB_OBJS += send-pack.o
 LIB_OBJS += sequencer.o
 LIB_OBJS += serve.o
@@ -1802,6 +1805,7 @@ else
 		CURL_CFLAGS = $(eval CURL_CFLAGS := $$(shell $$(CURL_CONFIG) --cflags))$(CURL_CFLAGS)
         endif
 	BASIC_CFLAGS += $(CURL_CFLAGS)
+	EXTLIBS += $(CURL_LIBCURL)
 
 	REMOTE_CURL_PRIMARY = git-remote-http$X
 	REMOTE_CURL_ALIASES = git-remote-https$X git-remote-ftp$X git-remote-ftps$X
