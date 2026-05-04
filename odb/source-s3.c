@@ -186,6 +186,8 @@ struct s3_pending_pack {
 	char *pack_path;
 	char *idx_path;
 	char *rev_path;
+
+	const char *pack_basename;
 };
 
 static void s3_pending_pack_release(struct s3_pending_pack *pending)
@@ -338,6 +340,8 @@ static int s3_write_pending_pack(struct odb_source_s3 *s3,
 		goto out;
 	}
 
+	pending->pack_basename = pack_basename;
+
 out:
 	strbuf_release(&key);
 
@@ -350,7 +354,7 @@ static int write_objects(struct odb_source_s3 *s3,
 {
 	struct s3_pending_pack pending_pack = { 0 };
 	struct s3_manifest new_manifest = S3_MANIFEST_INIT;
-	const char *pack_basename, *hash_end;
+	const char *hash_end;
 	int ret = 0;
 
 	if (!objects_nr)
@@ -370,10 +374,9 @@ static int write_objects(struct odb_source_s3 *s3,
 	/* Fetch the current manifest, append the hash, re-upload. */
 	s3_manifest_copy(s3_storage_get_manifest(s3->storage), &new_manifest);
 
-	pack_basename = strrchr(pending_pack.pack_path, '/') + 1;
-	hash_end = strrchr(pack_basename, '.');
+	hash_end = strrchr(pending_pack.pack_basename, '.');
 	string_list_append_nodup(&new_manifest.packs,
-				 xstrndup(pack_basename, hash_end - pack_basename));
+				 xstrndup(pending_pack.pack_basename, hash_end - pending_pack.pack_basename));
 
 	if (s3_storage_update_manifest(s3->storage, &new_manifest) < 0) {
 		ret = -1;
@@ -381,7 +384,7 @@ static int write_objects(struct odb_source_s3 *s3,
 	}
 
 	if (!packfile_store_load_pack(s3->packed, pending_pack.idx_path, 1))
-		die("s3: failed to activate newly written pack '%s'", pack_basename);
+		die("s3: failed to activate newly written pack '%s'", pending_pack.pack_basename);
 
 out:
 	s3_manifest_release(&new_manifest);
