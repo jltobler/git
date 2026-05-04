@@ -22,6 +22,7 @@
 #include "strbuf.h"
 #include "string-list.h"
 #include "s3.h"
+#include "strvec.h"
 #include "tempfile.h"
 #include "wrapper.h"
 #include "write-or-die.h"
@@ -486,6 +487,7 @@ struct odb_transaction_s3 {
 	size_t objects_nr, objects_alloc;
 	struct s3_pending_pack *packs;
 	size_t packs_nr, packs_alloc;
+	struct strvec env;
 };
 
 static int odb_transaction_s3_commit(struct odb_transaction *base)
@@ -544,6 +546,7 @@ out:
 	for (size_t i = 0; i < tx->packs_nr; i++)
 		s3_pending_pack_release(&tx->packs[i]);
 	free(tx->packs);
+	strvec_clear(&tx->env);
 
 	return ret;
 }
@@ -574,6 +577,19 @@ static int odb_transaction_s3_write_object_stream(struct odb_transaction *base,
 	return 0;
 }
 
+static const char **odb_transaction_s3_env(struct odb_transaction *base)
+{
+	struct odb_transaction_s3 *tx = container_of(base, struct odb_transaction_s3, base);
+	struct strbuf path = STRBUF_INIT;
+
+	s3_cache_write_manifest(tx->s3->storage, &tx->manifest, &path);
+	strvec_pushf(&tx->env, "%s=%s", "GIT_S3_MANIFEST", path.buf + (path.len - GIT_SHA256_HEXSZ));
+
+	strbuf_release(&path);
+
+	return tx->env.v;
+}
+
 static int odb_source_s3_begin_transaction(struct odb_source *source,
 					   struct odb_transaction **out,
 					   enum odb_transaction_flags flags UNUSED)
@@ -586,9 +602,12 @@ static int odb_source_s3_begin_transaction(struct odb_source *source,
 	tx->base.source = source;
 	tx->base.commit = odb_transaction_s3_commit;
 	tx->base.write_object_stream = odb_transaction_s3_write_object_stream;
+	tx->base.env = odb_transaction_s3_env;
 	tx->manifest = manifest;
 
 	s3_manifest_copy(s3_storage_get_manifest(tx->s3->storage), &tx->manifest);
+
+	strvec_init(&tx->env);
 
 	*out = &tx->base;
 	return 0;
