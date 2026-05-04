@@ -182,12 +182,23 @@ struct s3_pending_object {
 	unsigned long len;
 };
 
+struct s3_pending_pack {
+	char *pack_path;
+	char *idx_path;
+	char *rev_path;
+};
+
+static void s3_pending_pack_release(struct s3_pending_pack *pending)
+{
+	free(pending->pack_path);
+	free(pending->idx_path);
+	free(pending->rev_path);
+}
+
 static int write_pending_to_pack(struct odb_source_s3 *s3,
 				 struct s3_pending_object *objects,
 				 size_t objects_nr,
-				 char **pack_path_out,
-				 char **idx_path_out,
-				 char **rev_path_out)
+				 struct s3_pending_pack *out)
 {
 	struct repository *repo = s3->base.odb->repo;
 	const struct git_hash_algo *algo = repo->hash_algo;
@@ -276,11 +287,11 @@ static int write_pending_to_pack(struct odb_source_s3 *s3,
 	free(write_rev_file(repo, rev_path, idx_entries, objects_nr,
 			    pack_hash, WRITE_REV));
 
-	*pack_path_out = pack_path;
+	out->pack_path = pack_path;
 	pack_path = NULL;
-	*idx_path_out = idx_path;
+	out->idx_path = idx_path;
 	idx_path = NULL;
-	*rev_path_out = rev_path;
+	out->rev_path = rev_path;
 	rev_path = NULL;
 
 	ret = 0;
@@ -303,7 +314,7 @@ static int write_objects(struct odb_source_s3 *s3,
 			 struct s3_pending_object *objects,
 			 size_t objects_nr)
 {
-	char *pack_path = NULL, *idx_path = NULL, *rev_path = NULL;
+	struct s3_pending_pack pending_pack = { 0 };
 	const char *pack_basename, *idx_basename, *rev_basename, *hash_end;
 	struct s3_manifest new_manifest = S3_MANIFEST_INIT;
 	struct strbuf key = STRBUF_INIT;
@@ -312,30 +323,29 @@ static int write_objects(struct odb_source_s3 *s3,
 	if (!objects_nr)
 		return 0;
 
-	if (write_pending_to_pack(s3, objects, objects_nr,
-				  &pack_path, &idx_path, &rev_path) < 0) {
+	if (write_pending_to_pack(s3, objects, objects_nr, &pending_pack) < 0) {
 		ret = -1;
 		goto out;
 	}
 
 	/* Upload the .pack and .idx to S3. */
-	pack_basename = strrchr(pack_path, '/') + 1;
-	s3_key(s3->storage, &key, pack_path + strlen(s3->storage->cache_dir) + 1);
-	if (s3_put_from_file(s3->storage, key.buf, pack_path) < 0) {
+	pack_basename = strrchr(pending_pack.pack_path, '/') + 1;
+	s3_key(s3->storage, &key, pending_pack.pack_path + strlen(s3->storage->cache_dir) + 1);
+	if (s3_put_from_file(s3->storage, key.buf, pending_pack.pack_path) < 0) {
 		ret = error("failed uploading pack '%s'", pack_basename);
 		goto out;
 	}
 
-	idx_basename = strrchr(idx_path, '/') + 1;
-	s3_key(s3->storage, &key, idx_path + strlen(s3->storage->cache_dir) + 1);
-	if (s3_put_from_file(s3->storage, key.buf, idx_path) < 0) {
+	idx_basename = strrchr(pending_pack.idx_path, '/') + 1;
+	s3_key(s3->storage, &key, pending_pack.idx_path + strlen(s3->storage->cache_dir) + 1);
+	if (s3_put_from_file(s3->storage, key.buf, pending_pack.idx_path) < 0) {
 		ret = error("failed uploading index '%s'", idx_basename);
 		goto out;
 	}
 
-	rev_basename = strrchr(rev_path, '/') + 1;
-	s3_key(s3->storage, &key, rev_path + strlen(s3->storage->cache_dir) + 1);
-	if (s3_put_from_file(s3->storage, key.buf, rev_path) < 0) {
+	rev_basename = strrchr(pending_pack.rev_path, '/') + 1;
+	s3_key(s3->storage, &key, pending_pack.rev_path + strlen(s3->storage->cache_dir) + 1);
+	if (s3_put_from_file(s3->storage, key.buf, pending_pack.rev_path) < 0) {
 		ret = error("failed uploading reverse index '%s'", rev_basename);
 		goto out;
 	}
@@ -352,15 +362,14 @@ static int write_objects(struct odb_source_s3 *s3,
 		goto out;
 	}
 
-	if (!packfile_store_load_pack(s3->packed, idx_path, 1))
+	if (!packfile_store_load_pack(s3->packed, pending_pack.idx_path, 1))
 		die("s3: failed to activate newly written pack '%s'", pack_basename);
 
 out:
 	s3_manifest_release(&new_manifest);
 	strbuf_release(&key);
-	free(pack_path);
-	free(idx_path);
-	free(rev_path);
+	s3_pending_pack_release(&pending_pack);
+
 	return ret;
 }
 
