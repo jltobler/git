@@ -1150,9 +1150,13 @@ if curl.found()
     use_curl_for_imap_send = true
   endif
 
+  libgit_sources += [
+    's3.c',
+  ]
+
   # Most executables don't have to link against libcurl, but we still need its
   # include directories so that we can resolve LIBCURL_VERSION in "help.c".
-  libgit_dependencies += curl.partial_dependency(includes: true)
+  libgit_dependencies += curl
   build_options_config.set('NO_CURL', '')
 else
   libgit_c_args += '-DNO_CURL'
