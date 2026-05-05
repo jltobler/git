@@ -1270,6 +1270,9 @@ LIB_OBJS += ref-filter.o
 LIB_OBJS += reflog-walk.o
 LIB_OBJS += reflog.o
 LIB_OBJS += refs.o
+ifndef NO_CURL
+LIB_OBJS += refs/s3-backend.o
+endif
 LIB_OBJS += refs/debug.o
 LIB_OBJS += refs/files-backend.o
 LIB_OBJS += refs/reftable-backend.o

@@ -1152,6 +1152,7 @@ if curl.found()
 
   libgit_sources += [
     'odb/source-s3.c',
+    'refs/s3-backend.c',
     's3.c',
   ]
 

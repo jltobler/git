@@ -14,10 +14,12 @@ struct repository;
  */
 struct s3_manifest {
 	struct string_list packs;
+	struct string_list reftables;
 };
 
 #define S3_MANIFEST_INIT { \
 	.packs = STRING_LIST_INIT_DUP, \
+	.reftables = STRING_LIST_INIT_DUP, \
 }
 
 /* Release memory associated with the given manifest. */
