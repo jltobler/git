@@ -2,6 +2,7 @@
 #define S3_H
 
 #include "git-compat-util.h"
+#include "string-list.h"
 
 struct strbuf;
 struct repository;
@@ -12,9 +13,11 @@ struct repository;
  * content-addressable.
  */
 struct s3_manifest {
+	struct string_list packs;
 };
 
 #define S3_MANIFEST_INIT { \
+	.packs = STRING_LIST_INIT_DUP, \
 }
 
 /* Release memory associated with the given manifest. */

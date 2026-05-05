@@ -595,6 +595,9 @@ int s3_storage_update_manifest(struct s3_storage *storage,
 	struct tempfile *tempfile = NULL;
 	int ret;
 
+	for (size_t i = 0; i < manifest->packs.nr; i++)
+		strbuf_addf(&content, "p: %s\n", manifest->packs.items[i].string);
+
 	sha256_buf_hex(content.buf, content.len, version_hex);
 
 	strbuf_addf(&path, "%s/manifests/tmp_manifest_XXXXXX", storage->cache_dir);
@@ -682,6 +685,12 @@ const struct s3_manifest *s3_storage_get_manifest(struct s3_storage *storage)
 
 	strbuf_trim(&content);
 	string_list_split(&lines, content.buf, "\n", -1);
+
+	for (size_t i = 0; i < lines.nr; i++) {
+		struct string_list_item *item = &lines.items[i];
+		if (item->string[0] == 'p')
+			string_list_append(&manifest.packs, item->string + 3);
+	}
 
 	storage->manifest = manifest;
 	storage->manifest_initialized = true;
@@ -787,11 +796,15 @@ void s3_storage_release(struct s3_storage *storage)
 	free(storage);
 }
 
-void s3_manifest_release(struct s3_manifest *manifest UNUSED)
+void s3_manifest_release(struct s3_manifest *manifest)
 {
+	string_list_clear(&manifest->packs, 0);
 }
 
-void s3_manifest_copy(const struct s3_manifest *from UNUSED,
-		      struct s3_manifest *to UNUSED)
+void s3_manifest_copy(const struct s3_manifest *from,
+		      struct s3_manifest *to)
 {
+	struct string_list_item *item;
+	for_each_string_list_item(item, &from->packs)
+		string_list_append(&to->packs, item->string);
 }
