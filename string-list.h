@@ -249,13 +249,13 @@ void string_list_sort_u(struct string_list *list, int free_util);
  * Like `string_list_has_string()` but for unsorted lists. Linear in
  * size of the list.
  */
-int unsorted_string_list_has_string(struct string_list *list, const char *string);
+int unsorted_string_list_has_string(const struct string_list *list, const char *string);
 
 /**
  * Like `string_list_lookup()` but for unsorted lists. Linear in size
  * of the list.
  */
-struct string_list_item *unsorted_string_list_lookup(struct string_list *list,
+struct string_list_item *unsorted_string_list_lookup(const struct string_list *list,
 						     const char *string);
 /**
  * Remove an item from a string_list. The `string` pointer of the

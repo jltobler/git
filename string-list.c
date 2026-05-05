@@ -253,7 +253,7 @@ void string_list_sort_u(struct string_list *list, int free_util)
 	string_list_remove_duplicates(list, free_util);
 }
 
-struct string_list_item *unsorted_string_list_lookup(struct string_list *list,
+struct string_list_item *unsorted_string_list_lookup(const struct string_list *list,
 						     const char *string)
 {
 	struct string_list_item *item;
@@ -265,7 +265,7 @@ struct string_list_item *unsorted_string_list_lookup(struct string_list *list,
 	return NULL;
 }
 
-int unsorted_string_list_has_string(struct string_list *list,
+int unsorted_string_list_has_string(const struct string_list *list,
 				    const char *string)
 {
 	return unsorted_string_list_lookup(list, string) != NULL;
