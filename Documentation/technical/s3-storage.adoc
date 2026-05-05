@@ -1,0 +1,536 @@
+S3-Backed Object and Reference Stores
+=====================================
+
+Overview
+--------
+
+Problem statement
+~~~~~~~~~~~~~~~~~
+
+Hosting Git on traditional filesystems forces every server that participates in
+serving a repository to mount that repository's working storage. Scaling such a
+deployment requires either replicating the data, sharing it via a network
+filesystem, or routing every request to a small number of "owning" nodes. Each
+of these is operationally expensive and limits how Git fits into modern
+cloud-native infrastructure.
+
+Cloud object storage (Amazon S3 and S3-compatible services such as SeaweedFS)
+offers a different model: a durable, highly available shared namespace
+addressed over HTTP, with no notion of a mounted volume. Pushing Git's
+persistent state into such a service lets any number of stateless machines
+serve the same repository, paying only the cost of a small local cache.
+
+Goals
+~~~~~
+
+* Persist objects and references to an S3-compatible bucket so that the
+  authoritative state of a repository can be shared between many machines
+  without a shared filesystem.
+
+* Provide a consistent, point-in-time view of refs and objects together. A
+  reader who pins to a particular state must see refs that resolve only to
+  objects which were already present in that state.
+
+* Keep the local working set small. Machines should cache only what they
+  actually consult; the bulk of the repository may remain in object storage.
+
+* Work uniformly against both Amazon S3 and other implementations of the S3
+  protocol (e.g. SeaweedFS).
+
+Non-goals
+~~~~~~~~~
+
+* This backend is not a promisor remote and does not implement partial-clone
+  semantics. All objects referenced by the manifest must be retrievable.
+
+* The current iteration detects concurrent writers via compare-and-swap on the
+  manifest pointer (see <<concurrency>>) but does not yet transparently retry a
+  conflicting write by re-reading the manifest and re-merging the writer's
+  changes onto the new state; a losing writer simply fails and must be retried
+  by the caller. See <<future-work>>.
+
+* Workloads dominated by large numbers of cold random reads are not the primary
+  target. The design optimises for repositories that are read in bulk and
+  updated periodically.
+
+Architecture at a glance
+------------------------
+
+The backend has two pluggable extension points that share the same underlying
+S3 client:
+
+* The object database extension (`extensions.objectStorage`) installs an ODB
+  source that fetches packfiles from S3 and serves reads from a local pack
+  cache.
+
+* The reference storage extension (`extensions.refStorage = s3`) installs a
+  ref backend that uses the reftable library's lower-level building blocks
+  (`reftable_writer`, `reftable_table`, `reftable_merged_table`) directly,
+  bypassing `reftable_stack` entirely. The manifest's `r:` entries are the
+  authoritative active set, so no on-disk `tables.list` file is needed. The
+  backend is a peer of the regular reftable backend rather than a wrapper
+  around it; reflog and worktree support are intentionally omitted, since
+  neither is required by the kinds of stateless server deployments this
+  backend is aimed at.
+
+Both extensions cooperate through a single shared object: the S3 storage
+handle, which is reference-counted and deduplicated by URL.  When the ODB
+source and the ref backend point at the same bucket and prefix, they obtain
+the same handle and therefore share a single in-memory view of the manifest
+(see <<manifest-cache>>).
+
+----
++--------------------+      +-----------------------+
+| S3 object source   |      | S3 reference backend  |
+| - fetches packs    |      | - fetches reftables   |
+| - writes packs     |      | - writes reftables    |
++----------+---------+      +-----------+-----------+
+           \                            /
+            \                          /
+             v                        v
+           +-------------------------------+
+           | Shared S3 storage handle      |
+           | - Manifest handling           |
+           | - Endpoint configuration      |
+           | - Credentials                 |
+           +---------------+---------------+
+                           |
+                           v
+                  +-----------------+
+                  | S3-compatible   |
+                  | bucket          |
+                  +-----------------+
+----
+
+[[layout]]
+Storage layout in S3
+--------------------
+
+A repository is identified by an `s3://` URL of the form
+
+----
+s3://<endpoint>/<bucket>/<prefix>
+----
+
+where `<endpoint>` is the HTTP authority of the S3 service, `<bucket>` is the
+bucket name, and `<prefix>` is the key prefix that scopes a single repository
+within the bucket.
+
+Within such a `<prefix>` the layout is:
+
+----
+<prefix>/manifest                  mutable pointer to the current manifest
+<prefix>/manifests/<sha256-hex>    immutable, content-addressed manifest versions
+<prefix>/packs/<hash>.pack         immutable packfiles
+<prefix>/packs/<hash>.idx          immutable pack indexes
+<prefix>/packs/<hash>.rev          immutable pack reverse indexes
+<prefix>/reftables/<sha256>.ref    immutable, content-addressed reftables
+----
+
+Every object except `<prefix>/manifest` is content-addressable and immutable.
+The single mutable pointer at `<prefix>/manifest` contains the hash of the
+manifest version that constitutes the current authoritative state of the
+repository.
+
+A manifest is a small text file enumerating the active artifacts.  Lines
+beginning with `p:` list packfiles by their bare hex hash; lines beginning with
+`r:` list reftables by their bare hex hash. The hash of a reftable entry is the
+SHA-256 of the table file's bytes:
+
+----
+p: 3472ebb5128456d753dee031162e0a4daef8e0bd
+p: 86a2525d853315ebbeb6d3521c582b6cbc461783
+r: 0fc7ea9f0e2cb44a48b66bf1f5e26e3ff7b1f0c3a39c2c3128da6826dad8aafe
+r: e80c12f3a9b8b6541b3cb33b1be6cb1c2a1ef62dbed9b8c3f8e8a3a4b67c1d2e
+----
+
+Combining packs and reftables into a single manifest is deliberate: a single
+pointer flip atomically advances both the object database and the reference
+store, which is what makes consistent snapshot reads across both subsystems
+possible (see <<concurrency>>).
+
+Local cache layout
+------------------
+
+Each machine maintains a small mirror of the artifacts it has actually used.
+The local layout is:
+
+----
+<commondir>/s3-cache/manifests/             downloaded manifest versions
+<commondir>/s3-cache/packs/                 downloaded packs / indexes / reverse indexes
+<commondir>/s3-cache/reftables/             downloaded reftables (one per active table)
+<commondir>/s3-cache/reftables/<sha>.ref    content-addressed reftable file
+<commondir>/s3-cache/altsvc.txt             libcurl Alt-Svc cache (HTTP version negotiation)
+----
+
+The pack cache is sized only by what the local machine has needed; it is not a
+full mirror of `<prefix>/packs/`.  Reftable files share the same `s3-cache`
+hierarchy as the packs and manifests; their on-disk names match the manifest's
+`r:` entries with a `.ref` suffix appended.
+
+There is no on-disk "tables.list" file. The set of active reftables is read
+directly from the manifest's `r:` entries, and an in-memory
+`reftable_merged_table` is built from those tables at process startup (and
+rebuilt after any local mutation). This avoids the need for per-process
+locking files and keeps the reftable directory contents pure: every file in
+`<commondir>/s3-cache/reftables/` is named after its content.
+
+[[manifest-cache]]
+Manifest lifecycle and in-memory cache
+--------------------------------------
+
+The manifest is fetched lazily, cached in memory for the lifetime of the
+process, and updated in place whenever the process writes a new manifest
+version to S3. Both the ODB source and the ref backend obtain the cache through
+the shared storage handle, so they always observe the same manifest:
+
+----
+   +---------------+   first read   +-------------+
+   | uninitialized |--------------->|  resolved   |<--+
+   +---------------+                +------+------+   |
+                                           |          | successful
+                                           | write    | write
+                                           v          |
+                                    +-------------+   |
+                                    |   updated   |---+
+                                    +-------------+
+----
+
+* On first read the storage handle resolves the manifest.  If `GIT_S3_MANIFEST`
+  is set, its value is taken as the desired version; otherwise the currently
+  active manifest version is fetched via the manifest pointer stored in S3. The
+  named version is downloaded if not already present in the local cache.
+
+* On every successful write the handle replaces its cached snapshot with the
+  manifest that was just persisted. Subsequent reads inside the same process
+  observe that updated state immediately.
+
+Read path
+---------
+
+----
++----------------+
+| ODB / refs op  |
++----------------+
+        |
+  manifest cache hit? -- no --> +--------------------+      +------------+
+        |                       | resolve manifest   |----->|     S3     |
+       yes                      | (pointer + version)|<-----|            |
+        | <-------------------  +--------------------+      +------------+
+        |
+        v
++--------------------+      +------------+
+| download missing   |----->|     S3     |
+| packs / reftables  |<-----|            |
++--------+-----------+      +------------+
+        |
+        v
++-------------------------+
+| serve from local files  |
++-------------------------+
+----
+
+ODB
+~~~
+
+When the ODB source prepares it asks the storage handle for the current
+manifest, walks its pack list, and collects every pack, index, and reverse
+index that is not already in the local pack cache into a single batched
+download. The batch is driven by `curl_multi`: against an HTTP/2 or HTTP/3
+endpoint all transfers multiplex over one TLS connection, while HTTP/1.1
+endpoints fall back to a small connection pool. Only after every transfer has
+completed is each pack registered with an embedded packed-object source (pack
+activation requires the `.idx` to be on disk). All subsequent object lookups
+go through that local store; no further S3 traffic is incurred for reads of
+objects that are already covered by the cached packs.
+
+Reprepare requests (driven by `OBJECT_INFO_SECOND_READ`) cause the source to
+discard its initialization flag so that the next access re-resolves the
+manifest and absorbs any newly visible packs.
+
+References
+~~~~~~~~~~
+
+The reference backend resolves the manifest on first use, collects every
+reftable that is not yet present locally into a single batched download (also
+driven by `curl_multi` and sharing the same connection cache as the ODB
+source), opens each downloaded table as a `reftable_table`, and merges them
+into a single `reftable_merged_table`.  All reads (lookups, iteration) go
+directly through that merged view. Because the merged view is built from the
+manifest, two readers that pin to the same manifest version see the same set
+of tables regardless of any local state.
+
+Write path
+----------
+
+Artifact uploads (the `.pack` / `.idx` / `.rev` of any new packs, or the new
+`.ref` of a reftable transaction) and the new content-addressed manifest body
+are issued together as a single concurrent batch via `curl_multi`. Only after
+the whole batch is durable in S3 does the writer issue the conditional pointer
+PUT that advances `<prefix>/manifest`:
+
+----
++------------------+
+| build object/ref | pack file, reftable, ...
++---------+--------+
+          |
+          v
++----------------------------+
+| serialize new manifest body|
++---------+------------------+
+          |
+          v
++--------------------------------+      +------------+
+| concurrent batch upload:       |----->|     S3     |
+|   - artifacts (pack/idx/rev,   |<-----|            |
+|     and/or .ref)               |      +------------+
+|   - manifest body              |
++---------+----------------------+
+          |
+          v
++--------------------+      +------------+
+| advance pointer    |----->|     S3     |
+| (conditional PUT)  |<-----|            |
++---------+----------+      +------------+
+          |
+          v
++--------------------+
+| update local cache |
++--------------------+
+----
+
+Object writes
+~~~~~~~~~~~~~
+
+Object writes proceed by packing the new objects into a pack and then issuing
+a single concurrent batch upload of the `.pack`, `.idx`, `.rev`, and the new
+manifest body to S3, followed by the conditional pointer PUT that advances
+`<prefix>/manifest`. The pack is also registered with the embedded packed
+source so subsequent reads in the same process see it without re-resolving the
+manifest.
+
+The ODB source supports an explicit transaction interface that buffers pending
+objects and flushes them as a single pack on commit. This collapses multiple
+object writes into one S3 round-trip on the upload side and one manifest
+update. When the transaction produces multiple packs, every pack's three
+artefacts are folded together with the manifest body into the same batch, so
+the entire commit still costs one concurrent upload plus one pointer PUT.
+
+Packs are optimized using incremental geometric repacking. When the collection
+of remote packs no longer forms a geometric progression in object count, the
+smallest packs are merged into a single replacement pack. The merged
+`.pack`, `.idx`, `.rev` are uploaded together with the new manifest body in a
+single concurrent batch, and the pointer PUT then publishes a manifest in
+which the merged source packs are dropped and the replacement is added.
+
+The merge currently uses verbatim copies of pack contents: it does not
+recompute deltas or detect duplicates of the same object. This strategy needs
+to be adapted eventually, see <<future-work>>.
+
+Reference writes
+~~~~~~~~~~~~~~~~
+
+A reference write produces exactly one new reftable per transaction:
+
+. The backend opens a temporary file in `<commondir>/s3-cache/reftables/`
+  and creates a `reftable_writer` over its file descriptor.
+. The transaction's queued updates are sorted and written into the writer
+  as `REFTABLE_REF_VAL1`, `REFTABLE_REF_VAL2`, `REFTABLE_REF_SYMREF`, or
+  `REFTABLE_REF_DELETION` records.
+. The writer is closed; the file is then SHA-256-hashed and renamed to
+  `<sha256>.ref`.
+. The new `.ref` and the new manifest body (carrying one additional
+  `r: <sha256>` entry) are uploaded together in a single concurrent batch
+  to `<prefix>/reftables/<sha256>.ref` and `<prefix>/manifests/<sha256>`.
+  Because both keys are derived from content, the uploads are idempotent:
+  two writers that converge on the same logical state (for example by
+  computing the same compaction output) produce the same keys, and any
+  retry collapses to a byte-identical overwrite.
+. Once both uploads are durable the manifest pointer is advanced with a
+  conditional PUT (see <<concurrency>>).
+
+There is no auto-compaction inside the write path; each transaction adds
+exactly one table to the manifest. Compaction is exposed through the
+`optimize` entry point (driven by `git maintenance` / `git refs optimize`).
+For explicit invocations the entire stack is compacted down to a single
+table; for `REFS_OPTIMIZE_AUTO` invocations the backend instead picks a
+geometric segment using the same heuristic that `reftable_stack` uses
+internally — find the smallest contiguous range of tables whose sizes
+violate the geometric progression and merge just that range, leaving
+the rest alone. The geometric factor is configurable via
+`reftable.geometricfactor` and defaults to 2.
+
+Range compaction is integrated with the manifest update path: a partial
+compaction replaces only the affected `r:` entries in the manifest,
+keeping older and newer untouched tables in place. Tables outside the
+segment never need to be re-uploaded.
+
+Manifest update ordering is identical to object writes: artifacts first,
+then a new manifest version, then the pointer. The manifest's `r:` entry
+is the SHA-256 of the table; the `.ref` suffix is implied.
+
+[[concurrency]]
+Concurrency model
+-----------------
+
+Compare-and-swap on the manifest pointer
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+All artifacts apart from the manifest pointer are content-addressable and
+immutable, so concurrent writers never collide on artifact uploads themselves.
+The only contended object is the pointer at `<prefix>/manifest`.
+
+The pointer is advanced with a conditional PUT whose precondition depends on
+whether a previous version is known to the writer:
+
+* When the pointer already exists, the PUT carries `If-Match: <etag>`, where
+  `<etag>` is the entity tag observed when the manifest pointer was last read.
+  The S3 service performs the write only if the pointer still has that exact
+  entity tag; otherwise it returns `412 Precondition Failed` and the write is
+  rejected.
+
+* When this is the very first publish for the prefix and no pointer object
+  exists yet, the PUT instead carries `If-None-Match: *`. The service performs
+  the write only if no object currently exists at the key; otherwise a
+  concurrent first-writer is presumed to have just created one and the write
+  is rejected with `412 Precondition Failed`.
+
+The entity tag returned by the service in the response of a successful pointer
+PUT is recorded in the in-memory cache, so back-to-back writes from the same
+process chain CAS without an intervening GET.
+
+A `412` response surfaces to the caller as a write failure. The current
+implementation does not transparently re-read the manifest, re-merge the
+writer's intended change onto the fresh state, and retry; doing so is left as
+follow-up work (see <<future-work>>). Until then, callers that experience a
+conflict must redo the operation themselves.
+
+The packs, indexes, reverse indexes, reftables, and content-addressed manifest
+bodies under `<prefix>/manifests/<sha256-hex>` are written without
+preconditions: they are immutable by construction, so an overwrite by a
+concurrent writer would by definition produce identical bytes.
+
+Snapshot reads via content addressing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Because every manifest version is named by the SHA-256 of its content, a reader
+that has noted the current pointer value can read the named version
+indefinitely without seeing concurrent writes. Combined with `GIT_S3_MANIFEST`
+(see <<manifest-cache>>) this gives readers stable point-in-time snapshots that
+span both refs and objects.
+
+Tradeoffs and design decisions
+------------------------------
+
+* *Packfiles only; no loose objects.* Storing each loose object as its own S3
+  key would put a request on the critical path of every object read or write.
+  Packfiles amortize the cost across many objects.
+
+* *One combined manifest for packs and reftables.* The pointer is a single
+  point of mutability for the entire repository; advancing it advances refs and
+  objects together. This is what makes consistent point-in-time reads across
+  both subsystems possible.
+
+* *Content-addressable manifest versions plus a mutable pointer.* Versions can
+  be cached forever, replicated freely, and referenced by hash. The
+  multi-writer concurrency problem is reduced to a single-pointer update, made
+  safe via `If-Match` / `If-None-Match` conditional writes (see
+  <<concurrency>>).
+
+* *Eager prepare downloads all referenced packs.* Pack lookups need random
+  access to the index, so streaming packs from S3 per-read would multiply
+  request latencies. Downloading the full set on prepare keeps subsequent reads
+  cheap; geometric repacking limits the size of that set.
+
+* *Local cache always on, under `<commondir>/s3-cache/`.* The cache is required
+  by the design rather than an opportunistic optimisation: pack index access is
+  random, and re-fetching packs from S3 between accesses would be unworkable.
+
+* *Refcounted shared storage handle.* Both the ODB source and the ref backend
+  target the same bucket; sharing the handle (and its cached manifest) is what
+  keeps their views consistent within a process.
+
+* *Direct use of the reftable library, no reflog or worktree support.* The S3
+  reference backend is a peer of the regular reftable backend rather than a
+  wrapper around it, which gives it full control over the on-disk layout and
+  table naming. Reflog and worktree handling are not implemented; both add
+  significant complexity and neither is required by the stateless server
+  workloads this backend targets.
+
+* *No `tables.list` file.* `reftable_stack`, the library's high-level entry
+  point, persists the active set of tables in a `tables.list` file in the
+  reftable directory. The S3 backend bypasses it: it composes
+  `reftable_merged_table` directly from the manifest's `r:` entries and
+  writes new tables with `reftable_writer` directly into a temp file. The
+  manifest is the only source of truth for which tables are active; the
+  local cache is just a content-addressed mirror.
+
+* *Content-addressed reftables.* Reftable files are named by the SHA-256 of
+  their content, mirroring the existing pack convention. The backend hashes
+  the table immediately after the writer closes and renames the temp file
+  into place under that name. Identical content yields the same key in S3,
+  so uploads are idempotent and two repositories that compute the same
+  compaction output reuse a single S3 object.
+
+Configuration reference
+-----------------------
+
+* `extensions.objectStorage = s3://<endpoint>/<bucket>/<prefix>` selects the
+  S3-backed ODB source.  See `linkgit:gitrepository-layout[5]` and
+  `repository-version.adoc` for general background on extensions.
+
+* `extensions.refStorage = s3` plus a payload of the form
+  `s3://<endpoint>/<bucket>/<prefix>` (passed via `GIT_REFERENCE_BACKEND` at
+  init time) selects the S3-backed reference backend.  See `reftable.adoc`
+  for the underlying reftable design.
+
+* `GIT_S3_MANIFEST=<sha256-hex>` pins the process to a specific manifest
+  version, giving stable point-in-time reads across both refs and objects.
+
+* `S3_KEY_ID` and `S3_KEY_SECRET` carry the access credentials used by the
+  underlying S3 client.
+
+[[future-work]]
+Future work
+-----------
+
+The current backend is functional but deliberately leaves several
+improvements for later iterations:
+
+* *Transparent retry on manifest CAS conflicts.* The pointer at
+  `<prefix>/manifest` is advanced with a conditional PUT, so concurrent
+  writers can no longer silently lose each other's updates (see
+  <<concurrency>>). However, a losing writer currently surfaces the conflict
+  to its caller as a hard error rather than re-reading the manifest,
+  re-merging its intended change onto the fresh state, and retrying the PUT.
+  Folding that read-modify-write loop into the storage layer would let
+  contending writers make progress without caller involvement.
+
+* *Streaming transactions.* The transaction interface buffers pending objects
+  in memory uncompressed until commit. Large pushes can therefore consume a
+  great deal of RAM. Streaming objects into the pack as they arrive would
+  remove this limit.
+
+* *Delta computation in repack.* Geometric repacking currently performs
+  verbatim copies and therefore cannot exploit deltas or detect duplicate
+  objects.
+
+* *Bitmap support.* Some bitmap-using code paths currently encounter
+  downcasts that the S3 ODB source cannot satisfy.  Operations affected by
+  this can fall back to `pack.useBitmaps=false`; first-class bitmap support
+  is a longer-term goal.
+
+* *Auto-compaction during writes.* Each transaction currently adds one
+  reftable to the manifest, with compaction triggered through
+  `optimize` (which the maintenance subsystem invokes opportunistically
+  via `optimize_required`). Running geometric compaction inline at the
+  end of every transaction (matching `reftable_stack_auto_compact`)
+  would amortise the cost across writers and keep the active set
+  bounded without relying on out-of-band maintenance.
+
+* *In-memory `suppress_deletions` API.* The merged-table iterator returns
+  deletion tombstones to consumers that haven't set the internal
+  `suppress_deletions` flag. The S3 backend filters them in its own
+  iterator advance function instead. A small library addition that
+  exposes the flag through the public `reftable_merged_table` API would
+  let the filtering happen inside the library where it belongs.
