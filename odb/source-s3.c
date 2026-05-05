@@ -481,6 +481,7 @@ out:
 struct odb_transaction_s3 {
 	struct odb_transaction base;
 	struct odb_source_s3 *s3;
+	struct s3_manifest manifest;
 	struct s3_pending_object *objects;
 	size_t objects_nr, objects_alloc;
 };
@@ -493,6 +494,7 @@ static int odb_transaction_s3_commit(struct odb_transaction *base)
 	if (write_objects(tx->s3, tx->objects, tx->objects_nr) < 0)
 		die("s3: failed to flush objects on transaction commit");
 
+	s3_manifest_release(&tx->manifest);
 	for (size_t i = 0; i < tx->objects_nr; i++)
 		free(tx->objects[i].data);
 	free(tx->objects);
@@ -530,6 +532,7 @@ static int odb_source_s3_begin_transaction(struct odb_source *source,
 					   struct odb_transaction **out,
 					   enum odb_transaction_flags flags UNUSED)
 {
+	struct s3_manifest manifest = S3_MANIFEST_INIT;
 	struct odb_transaction_s3 *tx;
 
 	CALLOC_ARRAY(tx, 1);
@@ -537,6 +540,9 @@ static int odb_source_s3_begin_transaction(struct odb_source *source,
 	tx->base.source = source;
 	tx->base.commit = odb_transaction_s3_commit;
 	tx->base.write_object_stream = odb_transaction_s3_write_object_stream;
+	tx->manifest = manifest;
+
+	s3_manifest_copy(s3_storage_get_manifest(tx->s3->storage), &tx->manifest);
 
 	*out = &tx->base;
 	return 0;
