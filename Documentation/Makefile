@@ -137,6 +137,7 @@ TECH_DOCS += technical/reftable
 TECH_DOCS += technical/remembering-renames
 TECH_DOCS += technical/repository-version
 TECH_DOCS += technical/rerere
+TECH_DOCS += technical/s3-storage
 TECH_DOCS += technical/scalar
 TECH_DOCS += technical/send-pack-pipeline
 TECH_DOCS += technical/shallow
