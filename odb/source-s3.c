@@ -456,7 +456,7 @@ struct odb_transaction_s3 {
 	size_t objects_nr, objects_alloc;
 };
 
-static void odb_transaction_s3_commit(struct odb_transaction *base)
+static int odb_transaction_s3_commit(struct odb_transaction *base)
 {
 	struct odb_transaction_s3 *tx =
 		container_of(base, struct odb_transaction_s3, base);
@@ -467,6 +467,8 @@ static void odb_transaction_s3_commit(struct odb_transaction *base)
 	for (size_t i = 0; i < tx->objects_nr; i++)
 		free(tx->objects[i].data);
 	free(tx->objects);
+
+	return 0;
 }
 
 static int odb_transaction_s3_write_object_stream(struct odb_transaction *base,
@@ -496,7 +498,8 @@ static int odb_transaction_s3_write_object_stream(struct odb_transaction *base,
 }
 
 static int odb_source_s3_begin_transaction(struct odb_source *source,
-					   struct odb_transaction **out)
+					   struct odb_transaction **out,
+					   enum odb_transaction_flags flags UNUSED)
 {
 	struct odb_transaction_s3 *tx;
 
