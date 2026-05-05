@@ -95,6 +95,10 @@ void s3_storage_release(struct s3_storage *storage);
  */
 const struct s3_manifest *s3_storage_get_manifest(struct s3_storage *storage);
 
+int s3_cache_write_manifest(struct s3_storage *storage,
+			    const struct s3_manifest *manifest,
+			    struct strbuf *manifest_path);
+
 /* Update the manifest stored in object storage. */
 int s3_storage_update_manifest(struct s3_storage *storage,
 			       const struct s3_manifest *manifest);

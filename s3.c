@@ -578,22 +578,15 @@ out:
 	return manifest;
 }
 
-/*
- * Write a new manifest version to S3 and advance the mutable pointer.
- *
- * The pack-hash list is serialised and content-addressed: the file is uploaded
- * to <prefix>/manifests/<sha256-of-content>, then the pointer at
- * <prefix>/manifest is updated to hold that hash.
- */
-int s3_storage_update_manifest(struct s3_storage *storage,
-			       const struct s3_manifest *manifest)
+int s3_cache_write_manifest(struct s3_storage *storage,
+			    const struct s3_manifest *manifest,
+			    struct strbuf *manifest_path)
 {
 	struct strbuf content = STRBUF_INIT;
 	struct strbuf path = STRBUF_INIT;
-	struct strbuf key = STRBUF_INIT;
 	char version_hex[GIT_SHA256_HEXSZ + 1];
 	struct tempfile *tempfile = NULL;
-	int ret;
+	int ret = 0;
 
 	for (size_t i = 0; i < manifest->packs.nr; i++)
 		strbuf_addf(&content, "p: %s\n", manifest->packs.items[i].string);
@@ -618,6 +611,34 @@ int s3_storage_update_manifest(struct s3_storage *storage,
 		goto out;
 	}
 
+	strbuf_swap(manifest_path, &path);
+
+out:
+	delete_tempfile(&tempfile);
+	strbuf_release(&content);
+	strbuf_release(&path);
+
+	return ret;
+}
+
+/*
+ * Write a new manifest version to S3 and advance the mutable pointer.
+ *
+ * The pack-hash list is serialised and content-addressed: the file is uploaded
+ * to <prefix>/manifests/<sha256-of-content>, then the pointer at
+ * <prefix>/manifest is updated to hold that hash.
+ */
+int s3_storage_update_manifest(struct s3_storage *storage,
+			       const struct s3_manifest *manifest)
+{
+	struct strbuf path = STRBUF_INIT;
+	struct strbuf key = STRBUF_INIT;
+	const char *version_hex;
+	int ret;
+
+	s3_cache_write_manifest(storage, manifest, &path);
+	version_hex = path.buf + (path.len - GIT_SHA256_HEXSZ);
+
 	s3_key(storage, &key, path.buf + strlen(storage->cache_dir) + 1);
 	ret = s3_put_from_file(storage, key.buf, path.buf);
 	if (ret < 0)
@@ -635,8 +656,6 @@ int s3_storage_update_manifest(struct s3_storage *storage,
 	s3_manifest_copy(manifest, &storage->manifest);
 
 out:
-	delete_tempfile(&tempfile);
-	strbuf_release(&content);
 	strbuf_release(&path);
 	strbuf_release(&key);
 	return ret;
