@@ -112,8 +112,6 @@ static enum {
 } use_keepalive;
 static int keepalive_in_sec = 5;
 
-static struct tmp_objdir *tmp_objdir;
-
 static struct proc_receive_ref {
 	unsigned int want_add:1,
 		     want_delete:1,
@@ -959,8 +957,8 @@ static int run_receive_hook(struct command *commands,
 		strvec_push(&opt.env, "GIT_PUSH_OPTION_COUNT");
 	}
 
-	if (tmp_objdir)
-		strvec_pushv(&opt.env, tmp_objdir_env(tmp_objdir));
+	if (the_repository->objects->transaction)
+		strvec_pushv(&opt.env, odb_transaction_env(the_repository->objects->transaction));
 
 	prepare_push_cert_sha1(&opt);
 
@@ -1363,7 +1361,7 @@ static int update_shallow_ref(struct command *cmd, struct shallow_info *si)
 		    !delayed_reachability_test(si, i))
 			oid_array_append(&extra, &si->shallow->oid[i]);
 
-	opt.env = tmp_objdir_env(tmp_objdir);
+	opt.env = odb_transaction_env(the_repository->objects->transaction);
 	setup_alternate_shallow(&shallow_lock, &opt.shallow_file, &extra);
 	if (check_connected(command_singleton_iterator, cmd, &opt)) {
 		rollback_shallow_file(the_repository, &shallow_lock);
@@ -1797,7 +1795,7 @@ static void set_connectivity_errors(struct command *commands,
 			/* to be checked in update_shallow_ref() */
 			continue;
 
-		opt.env = tmp_objdir_env(tmp_objdir);
+		opt.env = odb_transaction_env(the_repository->objects->transaction);
 		if (!check_connected(command_singleton_iterator, &singleton,
 				     &opt))
 			continue;
@@ -2052,7 +2050,7 @@ static void execute_commands(struct command *commands,
 		data.si = si;
 		opt.err_fd = err_fd;
 		opt.progress = err_fd && !quiet;
-		opt.env = tmp_objdir_env(tmp_objdir);
+		opt.env = odb_transaction_env(the_repository->objects->transaction);
 		opt.exclude_hidden_refs_section = "receive";
 
 		if (check_connected(iterate_receive_command_list, &data, &opt))
@@ -2101,14 +2099,13 @@ static void execute_commands(struct command *commands,
 	 * Now we'll start writing out refs, which means the objects need
 	 * to be in their final positions so that other processes can see them.
 	 */
-	if (tmp_objdir_migrate(tmp_objdir) < 0) {
+	if (odb_transaction_commit(the_repository->objects->transaction)) {
 		for (cmd = commands; cmd; cmd = cmd->next) {
 			if (!cmd->error_string)
 				cmd->error_string = "unable to migrate objects to permanent storage";
 		}
 		return;
 	}
-	tmp_objdir = NULL;
 
 	check_aliased_updates(commands);
 
@@ -2293,158 +2290,50 @@ static void read_push_options(struct packet_reader *reader,
 	}
 }
 
-static const char *parse_pack_header(struct pack_header *hdr)
-{
-	switch (read_pack_header(0, hdr)) {
-	case PH_ERROR_EOF:
-		return "eof before pack header was fully read";
-
-	case PH_ERROR_PACK_SIGNATURE:
-		return "protocol error (pack signature mismatch detected)";
-
-	case PH_ERROR_PROTOCOL:
-		return "protocol error (pack version unsupported)";
-
-	default:
-		return "unknown error in parse_pack_header";
-
-	case 0:
-		return NULL;
-	}
-}
-
 static struct tempfile *pack_lockfile;
 
-static void push_header_arg(struct strvec *args, struct pack_header *hdr)
+static const char *unpack_with_sideband(struct shallow_info *si,
+					struct odb_transaction *transaction)
 {
-	strvec_pushf(args, "--pack_header=%"PRIu32",%"PRIu32,
-		     ntohl(hdr->hdr_version), ntohl(hdr->hdr_entries));
-}
+	struct odb_transaction_write_pack_opts opts = {
+		.fsck_msg_types = fsck_msg_types.buf,
+		.max_pack_size = max_input_size,
+		.unpack_limit = unpack_limit,
+		.reject_thin = reject_thin,
+		.quiet = quiet,
+	};
+	struct async muxer;
 
-static const char *unpack(int err_fd, struct shallow_info *si)
-{
-	struct pack_header hdr;
-	const char *hdr_err;
-	int status;
-	struct child_process child = CHILD_PROCESS_INIT;
-	int fsck_objects = (receive_fsck_objects >= 0
-			    ? receive_fsck_objects
-			    : transfer_fsck_objects >= 0
-			    ? transfer_fsck_objects
-			    : 0);
-
-	hdr_err = parse_pack_header(&hdr);
-	if (hdr_err) {
-		if (err_fd > 0)
-			close(err_fd);
-		return hdr_err;
-	}
+	opts.fsck_objects = (receive_fsck_objects >= 0
+			  ? receive_fsck_objects
+			  : transfer_fsck_objects >= 0
+			  ? transfer_fsck_objects
+			  : 0);
 
 	if (si->nr_ours || si->nr_theirs) {
 		alt_shallow_file = setup_temporary_shallow(si->shallow);
-		strvec_push(&child.args, "--shallow-file");
-		strvec_push(&child.args, alt_shallow_file);
+		opts.shallow_file = alt_shallow_file;
 	}
 
-	tmp_objdir = tmp_objdir_create(the_repository, "incoming");
-	if (!tmp_objdir) {
-		if (err_fd > 0)
-			close(err_fd);
-		return "unable to create temporary object directory";
+	if (!use_sideband) {
+		odb_transaction_write_pack(transaction, 0, &opts);
+		return opts.error_msg;
 	}
-	strvec_pushv(&child.env, tmp_objdir_env(tmp_objdir));
-
-	/*
-	 * Normally we just pass the tmp_objdir environment to the child
-	 * processes that do the heavy lifting, but we may need to see these
-	 * objects ourselves to set up shallow information.
-	 */
-	tmp_objdir_add_as_alternate(tmp_objdir);
-
-	if (ntohl(hdr.hdr_entries) < unpack_limit) {
-		strvec_push(&child.args, "unpack-objects");
-		push_header_arg(&child.args, &hdr);
-		if (quiet)
-			strvec_push(&child.args, "-q");
-		if (fsck_objects)
-			strvec_pushf(&child.args, "--strict%s",
-				     fsck_msg_types.buf);
-		if (max_input_size)
-			strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX,
-				     (uintmax_t)max_input_size);
-		child.no_stdout = 1;
-		child.err = err_fd;
-		child.git_cmd = 1;
-		status = run_command(&child);
-		if (status)
-			return "unpack-objects abnormal exit";
-	} else {
-		char hostname[HOST_NAME_MAX + 1];
-		char *lockfile;
-
-		strvec_pushl(&child.args, "index-pack", "--stdin", NULL);
-		push_header_arg(&child.args, &hdr);
-
-		if (xgethostname(hostname, sizeof(hostname)))
-			xsnprintf(hostname, sizeof(hostname), "localhost");
-		strvec_pushf(&child.args,
-			     "--keep=receive-pack %"PRIuMAX" on %s",
-			     (uintmax_t)getpid(),
-			     hostname);
-
-		if (!quiet && err_fd)
-			strvec_push(&child.args, "--show-resolving-progress");
-		if (use_sideband)
-			strvec_push(&child.args, "--report-end-of-input");
-		if (fsck_objects)
-			strvec_pushf(&child.args, "--strict%s",
-				     fsck_msg_types.buf);
-		if (!reject_thin)
-			strvec_push(&child.args, "--fix-thin");
-		if (max_input_size)
-			strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX,
-				     (uintmax_t)max_input_size);
-		child.out = -1;
-		child.err = err_fd;
-		child.git_cmd = 1;
-		status = start_command(&child);
-		if (status)
-			return "index-pack fork failed";
-
-		lockfile = index_pack_lockfile(the_repository, child.out, NULL);
-		if (lockfile) {
-			pack_lockfile = register_tempfile(lockfile);
-			free(lockfile);
-		}
-		close(child.out);
-
-		status = finish_command(&child);
-		if (status)
-			return "index-pack abnormal exit";
-		odb_reprepare(the_repository->objects);
-	}
-	return NULL;
-}
-
-static const char *unpack_with_sideband(struct shallow_info *si)
-{
-	struct async muxer;
-	const char *ret;
-
-	if (!use_sideband)
-		return unpack(0, si);
 
 	use_keepalive = KEEPALIVE_AFTER_NUL;
 	memset(&muxer, 0, sizeof(muxer));
 	muxer.proc = copy_to_sideband;
 	muxer.in = -1;
 	if (start_async(&muxer))
-		return NULL;
+		return 0;
 
-	ret = unpack(muxer.in, si);
+	opts.err_fd = muxer.in;
+	odb_transaction_write_pack(transaction, 0, &opts);
 
 	finish_async(&muxer);
-	return ret;
+	pack_lockfile = opts.pack_lockfile;
+
+	return opts.error_msg;
 }
 
 static void prepare_shallow_update(struct shallow_info *si)
@@ -2618,6 +2507,7 @@ int cmd_receive_pack(int argc,
 	struct oid_array ref = OID_ARRAY_INIT;
 	struct shallow_info si;
 	struct packet_reader reader;
+	struct odb_transaction *transaction;
 
 	struct option options[] = {
 		OPT__QUIET(&quiet, N_("quiet")),
@@ -2702,7 +2592,10 @@ int cmd_receive_pack(int argc,
 		if (!si.nr_ours && !si.nr_theirs)
 			shallow_update = 0;
 		if (!delete_only(commands)) {
-			unpack_status = unpack_with_sideband(&si);
+			if (odb_transaction_begin(the_repository->objects, &transaction, ODB_TRANSACTION_RECEIVE))
+				unpack_status = "unable to start ODB transaction";
+			else
+				unpack_status = unpack_with_sideband(&si, transaction);
 			update_shallow_info(commands, &si, &ref);
 		}
 		use_keepalive = KEEPALIVE_ALWAYS;
