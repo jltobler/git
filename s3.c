@@ -1084,7 +1084,7 @@ out:
 }
 
 int s3_storage_write_manifest(struct s3_storage *storage,
-			      const struct s3_manifest *manifest UNUSED,
+			      const struct s3_manifest *manifest,
 			      struct strbuf *manifest_path)
 {
 	struct strbuf content = STRBUF_INIT;
@@ -1092,6 +1092,9 @@ int s3_storage_write_manifest(struct s3_storage *storage,
 	char version_hex[GIT_SHA256_HEXSZ + 1];
 	struct tempfile *tempfile = NULL;
 	int ret = 0;
+
+	for (size_t i = 0; i < manifest->packs.nr; i++)
+		strbuf_addf(&content, "p: %s\n", manifest->packs.items[i].string);
 
 	sha256_buf_hex(content.buf, content.len, version_hex);
 
@@ -1238,6 +1241,12 @@ const struct s3_manifest *s3_storage_get_manifest(struct s3_storage *storage)
 	strbuf_trim(&content);
 	string_list_split(&lines, content.buf, "\n", -1);
 
+	for (size_t i = 0; i < lines.nr; i++) {
+		struct string_list_item *item = &lines.items[i];
+		if (item->string[0] == 'p')
+			string_list_append(&manifest.packs, item->string + 3);
+	}
+
 	storage->manifest = manifest;
 	storage->manifest_initialized = true;
 
@@ -1353,10 +1362,14 @@ void s3_storage_release(struct s3_storage *storage)
 void s3_manifest_release(struct s3_manifest *manifest)
 {
 	s3_etag_release(&manifest->etag);
+	string_list_clear(&manifest->packs, 0);
 }
 
 void s3_manifest_copy(const struct s3_manifest *from,
 		      struct s3_manifest *to)
 {
+	struct string_list_item *item;
 	s3_etag_copy(&from->etag, &to->etag);
+	for_each_string_list_item(item, &from->packs)
+		string_list_append(&to->packs, item->string);
 }
