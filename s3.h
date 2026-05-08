@@ -2,6 +2,7 @@
 #define S3_H
 
 #include "git-compat-util.h"
+#include "hash.h"
 #include "string-list.h"
 #include "thread-utils.h"
 
@@ -28,11 +29,13 @@ struct s3_etag {
 struct s3_manifest {
 	struct s3_etag etag;
 	struct string_list packs;
+	struct string_list reftables;
 };
 
 #define S3_MANIFEST_INIT { \
 	.etag = S3_ETAG_INIT, \
 	.packs = STRING_LIST_INIT_DUP, \
+	.reftables = STRING_LIST_INIT_DUP, \
 }
 
 /* Release memory associated with the given manifest. */

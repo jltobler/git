@@ -1095,6 +1095,8 @@ int s3_storage_write_manifest(struct s3_storage *storage,
 
 	for (size_t i = 0; i < manifest->packs.nr; i++)
 		strbuf_addf(&content, "p: %s\n", manifest->packs.items[i].string);
+	for (size_t i = 0; i < manifest->reftables.nr; i++)
+		strbuf_addf(&content, "r: %s\n", manifest->reftables.items[i].string);
 
 	sha256_buf_hex(content.buf, content.len, version_hex);
 
@@ -1245,6 +1247,8 @@ const struct s3_manifest *s3_storage_get_manifest(struct s3_storage *storage)
 		struct string_list_item *item = &lines.items[i];
 		if (item->string[0] == 'p')
 			string_list_append(&manifest.packs, item->string + 3);
+		else if (item->string[0] == 'r')
+			string_list_append(&manifest.reftables, item->string + 3);
 	}
 
 	storage->manifest = manifest;
@@ -1363,6 +1367,7 @@ void s3_manifest_release(struct s3_manifest *manifest)
 {
 	s3_etag_release(&manifest->etag);
 	string_list_clear(&manifest->packs, 0);
+	string_list_clear(&manifest->reftables, 0);
 }
 
 void s3_manifest_copy(const struct s3_manifest *from,
@@ -1372,4 +1377,6 @@ void s3_manifest_copy(const struct s3_manifest *from,
 	s3_etag_copy(&from->etag, &to->etag);
 	for_each_string_list_item(item, &from->packs)
 		string_list_append(&to->packs, item->string);
+	for_each_string_list_item(item, &from->reftables)
+		string_list_append(&to->reftables, item->string);
 }
