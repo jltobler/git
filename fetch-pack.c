@@ -36,6 +36,8 @@
 #include "mergesort.h"
 #include "prio-queue.h"
 #include "promisor-remote.h"
+#include "odb/transaction.h"
+#include "tempfile.h"
 
 static int transfer_unpack_limit = -1;
 static int fetch_unpack_limit = -1;
@@ -881,25 +883,6 @@ static void create_promisor_file(const char *keep_name,
 	strbuf_release(&promisor_name);
 }
 
-static void parse_gitmodules_oids(int fd, struct oidset *gitmodules_oids)
-{
-	int len = the_hash_algo->hexsz + 1; /* hash + NL */
-
-	do {
-		char hex_hash[GIT_MAX_HEXSZ + 1];
-		int read_len = read_in_full(fd, hex_hash, len);
-		struct object_id oid;
-		const char *end;
-
-		if (!read_len)
-			return;
-		if (read_len != len)
-			die("invalid length read %d", read_len);
-		if (parse_oid_hex(hex_hash, &oid, &end) || *end != '\n')
-			die("invalid hash");
-		oidset_insert(gitmodules_oids, &oid);
-	} while (1);
-}
 
 static void add_index_pack_keep_option(struct strvec *args)
 {
@@ -923,13 +906,6 @@ static int get_pack(struct fetch_pack_args *args,
 		    struct oidset *gitmodules_oids)
 {
 	struct async demux;
-	int do_keep = args->keep_pack;
-	const char *cmd_name;
-	struct pack_header header;
-	int pass_header = 0;
-	struct child_process cmd = CHILD_PROCESS_INIT;
-	int fsck_objects = 0;
-	int ret;
 
 	memset(&demux, 0, sizeof(demux));
 	if (use_sideband) {
@@ -943,29 +919,27 @@ static int get_pack(struct fetch_pack_args *args,
 		demux.isolate_sigpipe = 1;
 		if (start_async(&demux))
 			die(_("fetch-pack: unable to fork off sideband demultiplexer"));
-	}
-	else
+	} else
 		demux.out = xd[0];
 
-	if (!args->keep_pack && unpack_limit && !index_pack_args) {
+	if (index_pack_args) {
+		/*
+		 * Packfile-URI path: we must also collect the index-pack
+		 * arguments so that http-fetch can run index-pack with
+		 * identical settings for each URI-fetched pack.  Spawn
+		 * index-pack manually for this case.
+		 */
+		int do_keep = args->keep_pack;
+		const char *cmd_name;
+		struct child_process cmd = CHILD_PROCESS_INIT;
+		int fsck_objects = fetch_pack_fsck_objects();
+		int ret;
 
-		if (read_pack_header(demux.out, &header))
-			die(_("protocol error: bad pack header"));
-		pass_header = 1;
-		if (ntohl(header.hdr_entries) < unpack_limit)
-			do_keep = 0;
-		else
-			do_keep = 1;
-	}
+		if (alternate_shallow_file) {
+			strvec_push(&cmd.args, "--shallow-file");
+			strvec_push(&cmd.args, alternate_shallow_file);
+		}
 
-	if (alternate_shallow_file) {
-		strvec_push(&cmd.args, "--shallow-file");
-		strvec_push(&cmd.args, alternate_shallow_file);
-	}
-
-	fsck_objects = fetch_pack_fsck_objects();
-
-	if (do_keep || args->from_promisor || index_pack_args || fsck_objects) {
 		if (pack_lockfiles || fsck_objects)
 			cmd.out = -1;
 		cmd_name = "index-pack";
@@ -975,18 +949,14 @@ static int get_pack(struct fetch_pack_args *args,
 			strvec_push(&cmd.args, "-v");
 		if (args->use_thin_pack)
 			strvec_push(&cmd.args, "--fix-thin");
-		if ((do_keep || index_pack_args) && (args->lock_pack || unpack_limit))
+		if (args->lock_pack || unpack_limit)
 			add_index_pack_keep_option(&cmd.args);
-		if (!index_pack_args && args->check_self_contained_and_connected)
-			strvec_push(&cmd.args, "--check-self-contained-and-connected");
-		else
-			/*
-			 * We cannot perform any connectivity checks because
-			 * not all packs have been downloaded; let the caller
-			 * have this responsibility.
-			 */
-			args->check_self_contained_and_connected = 0;
-
+		/*
+		 * We cannot perform any connectivity checks because not all
+		 * packs have been downloaded; let the caller have this
+		 * responsibility.
+		 */
+		args->check_self_contained_and_connected = 0;
 		if (args->from_promisor)
 			/*
 			 * create_promisor_file() may be called afterwards but
@@ -997,79 +967,178 @@ static int get_pack(struct fetch_pack_args *args,
 			 * it is missing).
 			 */
 			strvec_push(&cmd.args, "--promisor");
-	}
-	else {
-		cmd_name = "unpack-objects";
-		strvec_push(&cmd.args, cmd_name);
-		if (args->quiet || args->no_progress)
-			strvec_push(&cmd.args, "-q");
-		args->check_self_contained_and_connected = 0;
-	}
-
-	if (pass_header)
-		strvec_pushf(&cmd.args, "--pack_header=%"PRIu32",%"PRIu32,
-			     ntohl(header.hdr_version),
-				 ntohl(header.hdr_entries));
-	if (fsck_objects) {
-		if (args->from_promisor || index_pack_args)
+		if (fsck_objects)
 			/*
 			 * We cannot use --strict in index-pack because it
 			 * checks both broken objects and links, but we only
 			 * want to check for broken objects.
 			 */
 			strvec_push(&cmd.args, "--fsck-objects");
-		else
-			strvec_pushf(&cmd.args, "--strict%s",
-				     fsck_msg_types.buf);
-	}
 
-	if (index_pack_args)
 		strvec_pushv(index_pack_args, cmd.args.v);
 
-	sigchain_push(SIGPIPE, SIG_IGN);
+		sigchain_push(SIGPIPE, SIG_IGN);
 
-	cmd.in = demux.out;
-	cmd.git_cmd = 1;
-	if (start_command(&cmd))
-		die(_("fetch-pack: unable to fork off %s"), cmd_name);
-	if (do_keep && (pack_lockfiles || fsck_objects)) {
-		int is_well_formed;
-		char *pack_lockfile = index_pack_lockfile(the_repository,
-							  cmd.out,
-							  &is_well_formed);
+		cmd.in = demux.out;
+		cmd.git_cmd = 1;
+		if (start_command(&cmd))
+			die(_("fetch-pack: unable to fork off %s"), cmd_name);
+		if (do_keep && (pack_lockfiles || fsck_objects)) {
+			int is_well_formed;
+			char *pack_lockfile = index_pack_lockfile(the_repository,
+								  cmd.out,
+								  &is_well_formed);
 
-		if (!is_well_formed)
-			die(_("fetch-pack: invalid index-pack output"));
-		if (pack_lockfiles && pack_lockfile)
-			string_list_append_nodup(pack_lockfiles, pack_lockfile);
-		else
-			free(pack_lockfile);
-		parse_gitmodules_oids(cmd.out, gitmodules_oids);
-		close(cmd.out);
-	}
+			if (!is_well_formed)
+				die(_("fetch-pack: invalid index-pack output"));
+			if (pack_lockfiles && pack_lockfile)
+				string_list_append_nodup(pack_lockfiles, pack_lockfile);
+			else
+				free(pack_lockfile);
+			parse_gitmodules_oids(the_repository, cmd.out, gitmodules_oids);
+			close(cmd.out);
+		}
 
-	if (!use_sideband)
-		/* Closed by start_command() */
-		xd[0] = -1;
+		if (!use_sideband)
+			/* Closed by start_command() */
+			xd[0] = -1;
 
-	ret = finish_command(&cmd);
-	if (!ret || (args->check_self_contained_and_connected && ret == 1))
+		ret = finish_command(&cmd);
+		if (ret)
+			die(_("%s failed"), cmd_name);
+		if (use_sideband && finish_async(&demux))
+			die(_("error in sideband demultiplexer"));
+
+		sigchain_pop(SIGPIPE);
+
+		/*
+		 * Now that index-pack has succeeded, write the promisor file
+		 * using the obtained .keep filename if necessary.
+		 */
+		if (do_keep && pack_lockfiles && pack_lockfiles->nr &&
+		    args->from_promisor)
+			create_promisor_file(pack_lockfiles->items[0].string,
+					     sought, nr_sought);
+	} else {
+		/*
+		 * Normal path: delegate pack writing to the ODB transaction
+		 * so that alternative ODB backends (e.g. S3) can plug in
+		 * their own pack-writing logic.
+		 */
+		struct odb_transaction *transaction;
+		int fsck_objects = fetch_pack_fsck_objects();
+		struct odb_transaction_write_pack_opts opts = {
+			.caller_name = "fetch-pack",
+			/*
+			 * Force index-pack (unpack_limit = 0) when the caller
+			 * needs a kept pack, promisor objects, or fsck.
+			 * Otherwise let the transaction backend decide based on
+			 * the object count in the pack header.
+			 */
+			.unpack_limit = (args->keep_pack || args->from_promisor ||
+					 fsck_objects) ? 0 : unpack_limit,
+			.fsck_objects = fsck_objects,
+			.fsck_msg_types = fsck_msg_types.buf,
+			.quiet = args->quiet || args->no_progress,
+			.reject_thin = !args->use_thin_pack,
+			.shallow_file = alternate_shallow_file,
+			.from_promisor = args->from_promisor,
+			.check_self_contained_and_connected =
+				args->check_self_contained_and_connected,
+			.gitmodules_oids = gitmodules_oids,
+		};
+		char *pack_name = NULL;
+
+
+		odb_transaction_begin_or_die(the_repository->objects,
+					     &transaction, ODB_TRANSACTION_RECEIVE);
+
+		if (odb_transaction_write_pack(transaction, demux.out, &opts))
+			die(_("fetch-pack: %s"),
+			    opts.error_msg ? opts.error_msg
+					   : _("unable to write pack"));
+
 		args->self_contained_and_connected =
-			args->check_self_contained_and_connected &&
-			ret == 0;
-	else
-		die(_("%s failed"), cmd_name);
-	if (use_sideband && finish_async(&demux))
-		die(_("error in sideband demultiplexer"));
+			opts.check_self_contained_and_connected &&
+			opts.self_contained_and_connected;
 
-	sigchain_pop(SIGPIPE);
+		/*
+		 * Capture the pack filename before committing: the transaction
+		 * commit migrates the .keep file out of the temp directory, so
+		 * opts.pack_lockfile->filename will point to a stale (temp)
+		 * path afterwards.  Extract just the basename now and
+		 * reconstruct the real-ODB path after commit.
+		 */
+		if (opts.pack_lockfile) {
+			const char *temp_path = get_tempfile_path(opts.pack_lockfile);
+			const char *slash = strrchr(temp_path, '/');
+			if (slash)
+				pack_name = xstrdup(slash + 1);
 
-	/*
-	 * Now that index-pack has succeeded, write the promisor file using the
-	 * obtained .keep filename if necessary
-	 */
-	if (do_keep && pack_lockfiles && pack_lockfiles->nr && args->from_promisor)
-		create_promisor_file(pack_lockfiles->items[0].string, sought, nr_sought);
+			/*
+			 * index-pack --promisor creates an empty .promisor file
+			 * as a side effect.  create_promisor_file() will write
+			 * the canonical ref-list content after commit, so remove
+			 * the empty placeholder now to prevent a migration
+			 * collision if this pack has been fetched before.
+			 */
+			if (args->from_promisor) {
+				struct strbuf promisor_path = STRBUF_INIT;
+				strbuf_addstr(&promisor_path, temp_path);
+				if (strbuf_strip_suffix(&promisor_path, ".keep")) {
+					strbuf_addstr(&promisor_path, ".promisor");
+					unlink(promisor_path.buf);
+				}
+				strbuf_release(&promisor_path);
+			}
+		}
+
+		if (odb_transaction_commit(transaction))
+			die(_("fetch-pack: failed to commit ODB transaction"));
+
+		/*
+		 * After commit the primary ODB is restored, so
+		 * repo_get_object_directory() now returns the real object
+		 * directory where the migrated .keep file lives.
+		 */
+		if (pack_name) {
+			char *real_path = xstrfmt("%s/pack/%s",
+				repo_get_object_directory(the_repository),
+				pack_name);
+			free(pack_name);
+
+			if (args->from_promisor)
+				/*
+				 * Write the canonical ref-list content to the
+				 * .promisor file.  The empty placeholder created
+				 * by index-pack --promisor was removed before the
+				 * commit (to prevent migration collisions on
+				 * re-fetch), so create_promisor_file() is the
+				 * sole writer here.
+				 */
+				create_promisor_file(real_path, sought, nr_sought);
+
+			if (pack_lockfiles)
+				string_list_append_nodup(pack_lockfiles, real_path);
+			else {
+				/*
+				 * Nobody is tracking this lockfile; remove it
+				 * immediately.  This matches the pre-transaction
+				 * behavior where --keep was omitted (and no .keep
+				 * file created) when pack_lockfiles was NULL.
+				 */
+				unlink_or_warn(real_path);
+				free(real_path);
+			}
+		}
+
+		if (!use_sideband)
+			/* Closed by start_command() */
+			xd[0] = -1;
+
+		if (use_sideband && finish_async(&demux))
+			die(_("error in sideband demultiplexer"));
+	}
 
 	return 0;
 }
@@ -1857,7 +1926,8 @@ static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
 
 		packname[the_hash_algo->hexsz] = '\0';
 
-		parse_gitmodules_oids(cmd.out, &fsck_options.gitmodules_found);
+		parse_gitmodules_oids(the_repository, cmd.out,
+				      &fsck_options.gitmodules_found);
 
 		close(cmd.out);
 

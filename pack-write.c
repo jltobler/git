@@ -2,6 +2,7 @@
 #include "environment.h"
 #include "gettext.h"
 #include "hex.h"
+#include "oidset.h"
 #include "pack.h"
 #include "csum-file.h"
 #include "remote.h"
@@ -596,6 +597,27 @@ void stage_tmp_packfiles(struct repository *repo,
 
 	free(rev_tmp_name);
 	free(mtimes_tmp_name);
+}
+
+void parse_gitmodules_oids(struct repository *r, int fd, struct oidset *oids)
+{
+	int len = r->hash_algo->hexsz + 1; /* hash + NL */
+
+	do {
+		char hex_hash[GIT_MAX_HEXSZ + 1];
+		int read_len = read_in_full(fd, hex_hash, len);
+		struct object_id oid;
+		const char *end;
+
+		if (!read_len)
+			return;
+		if (read_len != len)
+			die("invalid length read %d", read_len);
+		if (parse_oid_hex_algop(hex_hash, &oid, &end, r->hash_algo) ||
+		    *end != '\n')
+			die("invalid hash");
+		oidset_insert(oids, &oid);
+	} while (1);
 }
 
 void write_promisor_file(const char *promisor_name, struct ref **sought, int nr_sought)

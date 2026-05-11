@@ -1732,7 +1732,8 @@ static int odb_transaction_files_write_pack(struct odb_transaction *base,
 		if (xgethostname(hostname, sizeof(hostname)))
 			xsnprintf(hostname, sizeof(hostname), "localhost");
 		strvec_pushf(&child.args,
-			     "--keep=receive-pack %" PRIuMAX " on %s",
+			     "--keep=%s %" PRIuMAX " on %s",
+			     opts->caller_name ? opts->caller_name : "receive-pack",
 			     (uintmax_t)getpid(),
 			     hostname);
 
@@ -1740,11 +1741,26 @@ static int odb_transaction_files_write_pack(struct odb_transaction *base,
 			strvec_push(&child.args, "--show-resolving-progress");
 		if (err_fd)
 			strvec_push(&child.args, "--report-end-of-input");
-		if (opts->fsck_objects)
-			strvec_pushf(&child.args, "--strict%s",
-				     opts->fsck_msg_types);
+		if (opts->fsck_objects) {
+			if (opts->from_promisor)
+				/*
+				 * Do not use --strict here: we only want to
+				 * detect broken objects, not missing links,
+				 * since promisor packs are allowed to have
+				 * dangling references.
+				 */
+				strvec_push(&child.args, "--fsck-objects");
+			else
+				strvec_pushf(&child.args, "--strict%s",
+					     opts->fsck_msg_types);
+		}
 		if (!opts->reject_thin)
 			strvec_push(&child.args, "--fix-thin");
+		if (opts->from_promisor)
+			strvec_push(&child.args, "--promisor");
+		if (opts->check_self_contained_and_connected)
+			strvec_push(&child.args,
+				    "--check-self-contained-and-connected");
 		if (opts->max_pack_size)
 			strvec_pushf(&child.args, "--max-input-size=%" PRIuMAX,
 				     (uintmax_t)opts->max_pack_size);
@@ -1763,10 +1779,19 @@ static int odb_transaction_files_write_pack(struct odb_transaction *base,
 			opts->pack_lockfile = register_tempfile(lockfile);
 			free(lockfile);
 		}
+		if (opts->gitmodules_oids)
+			parse_gitmodules_oids(the_repository, child.out,
+					      opts->gitmodules_oids);
 		close(child.out);
 
 		status = finish_command(&child);
-		if (status) {
+		if (!status) {
+			opts->self_contained_and_connected =
+				opts->check_self_contained_and_connected;
+		} else if (opts->check_self_contained_and_connected &&
+			   status == 1) {
+			opts->self_contained_and_connected = 0;
+		} else {
 			opts->error_msg = "index-pack abnormal exit";
 			return -1;
 		}

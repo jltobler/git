@@ -107,6 +107,16 @@ void fixup_pack_header_footer(const struct git_hash_algo *, int,
 			      unsigned char *, off_t);
 char *index_pack_lockfile(struct repository *r, int fd, int *is_well_formed);
 
+struct oidset;
+
+/*
+ * Read zero or more OIDs from `fd`, one per line in hex, and insert
+ * them into `oids`.  This is used to consume the optional per-object
+ * output that index-pack(1) emits after the pack lock-file line when
+ * run with --fsck-objects or --promisor.
+ */
+void parse_gitmodules_oids(struct repository *r, int fd, struct oidset *oids);
+
 struct ref;
 
 void write_promisor_file(const char *promisor_name, struct ref **sought, int nr_sought);

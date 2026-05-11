@@ -5,6 +5,8 @@
 #include "gettext.h"
 #include "odb.h"
 
+struct oidset;
+
 /*
  * Options for `odb_transaction_write_pack()`.
  */
@@ -18,6 +20,39 @@ struct odb_transaction_write_pack_opts {
 	int reject_thin;
 	int err_fd;
 	int quiet;
+
+	/*
+	 * Caller name embedded in the --keep lock-file description
+	 * (e.g. "fetch-pack" or "receive-pack").  Defaults to
+	 * "receive-pack" when NULL.
+	 */
+	const char *caller_name;
+
+	/*
+	 * When set, passes --promisor to index-pack and uses
+	 * --fsck-objects instead of --strict when fsck_objects is also
+	 * set (so that only broken objects, not missing links, are
+	 * reported).
+	 */
+	int from_promisor;
+
+	/*
+	 * When set, passes --check-self-contained-and-connected to
+	 * index-pack.  A return code of 1 from index-pack (pack is
+	 * valid but not fully self-contained) is treated as success;
+	 * the result is recorded in self_contained_and_connected.
+	 */
+	int check_self_contained_and_connected;
+
+	/* Output: set after write_pack when check_self_contained_and_connected. */
+	int self_contained_and_connected;
+
+	/*
+	 * Output: when non-NULL, OIDs of .gitmodules blobs found by
+	 * index-pack (via --fsck-objects or --promisor) are inserted
+	 * here.
+	 */
+	struct oidset *gitmodules_oids;
 
 	/*
 	 * To prevent races with concurrent repacks, the "files" backend creates
