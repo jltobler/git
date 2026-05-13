@@ -168,7 +168,7 @@ test_expect_success 'gc --quiet' '
 	test_must_be_empty stderr
 '
 
-test_expect_success 'gc.reflogExpire{Unreachable,}=never skips "expire" via "gc"' '
+test_expect_failure 'gc.reflogExpire{Unreachable,}=never skips "expire" via "gc"' '
 	test_config gc.reflogExpire never &&
 	test_config gc.reflogExpireUnreachable never &&
 

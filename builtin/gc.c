@@ -271,14 +271,24 @@ static int pack_refs_condition(UNUSED struct gc_config *cfg)
 static int maintenance_task_pack_refs(struct maintenance_run_opts *opts,
 				      UNUSED struct gc_config *cfg)
 {
-	struct child_process cmd = CHILD_PROCESS_INIT;
+	struct string_list includes = STRING_LIST_INIT_NODUP;
+	struct ref_exclusions excludes = REF_EXCLUSIONS_INIT;
+	struct refs_optimize_opts optimize_opts = {
+		.exclusions = &excludes,
+		.includes = &includes,
+		.flags = REFS_OPTIMIZE_PRUNE,
+	};
+	int ret;
 
-	cmd.git_cmd = 1;
-	strvec_pushl(&cmd.args, "pack-refs", "--all", "--prune", NULL);
+	string_list_append(optimize_opts.includes, "*");
 	if (opts->auto_flag)
-		strvec_push(&cmd.args, "--auto");
+		optimize_opts.flags |= REFS_OPTIMIZE_AUTO;
 
-	return run_command(&cmd);
+	ret = refs_optimize(get_main_ref_store(the_repository),
+			    &optimize_opts);
+
+	string_list_clear(&includes, 0);
+	return ret;
 }
 
 struct count_reflog_entries_data {
