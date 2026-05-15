@@ -23,6 +23,12 @@ enum odb_source_type {
 
 	/* The "in-memory" backend that stores objects in memory. */
 	ODB_SOURCE_INMEMORY,
+
+	/*
+	 * The "MVCC" backend that stores packfiles in a manifest-tracked
+	 * cache directory, with optional staging-area semantics for writes.
+	 */
+	ODB_SOURCE_MVCC,
 };
 
 struct object_id;

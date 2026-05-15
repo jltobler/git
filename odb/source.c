@@ -2,6 +2,7 @@
 #include "gettext.h"
 #include "object-file.h"
 #include "odb/source-files.h"
+#include "odb/source-mvcc.h"
 #include "odb/source.h"
 #include "packfile.h"
 
@@ -22,6 +23,9 @@ struct odb_source *odb_source_new(struct object_database *odb,
 
 	if (!strcmp(schema, "files")) {
 		source = &odb_source_files_new(odb, path, local)->base;
+		goto out;
+	} else if (!strcmp(schema, "mvcc")) {
+		source = &odb_source_mvcc_new(odb, path, local)->base;
 		goto out;
 	}
 
