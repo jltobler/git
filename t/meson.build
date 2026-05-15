@@ -154,6 +154,8 @@ integration_tests = [
   't0613-reftable-write-options.sh',
   't0614-reftable-fsck.sh',
   't0700-mvcc-odb.sh',
+  't0701-mvcc-refs.sh',
+  't0702-mvcc-combined.sh',
   't1000-read-tree-m-3way.sh',
   't1001-read-tree-m-2way.sh',
   't1002-read-tree-m-u-2way.sh',
