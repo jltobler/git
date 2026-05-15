@@ -389,6 +389,7 @@ libgit_sources = [
   'merge.c',
   'midx.c',
   'midx-write.c',
+  'mvcc.c',
   'name-hash.c',
   'negotiator/default.c',
   'negotiator/noop.c',
