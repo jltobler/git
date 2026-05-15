@@ -26,6 +26,7 @@ articles = [
   'remembering-renames.adoc',
   'repository-version.adoc',
   'rerere.adoc',
+  'mvcc-storage.adoc',
   'scalar.adoc',
   'send-pack-pipeline.adoc',
   'shallow.adoc',

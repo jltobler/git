@@ -1,0 +1,487 @@
+MVCC-Backed Object and Reference Stores
+=======================================
+
+Overview
+--------
+
+Problem statement
+~~~~~~~~~~~~~~~~~
+
+Hosting Git on traditional filesystems forces every server that participates in
+serving a repository to mount that repository's working storage. Scaling such a
+deployment requires either replicating the data, sharing it via a network
+filesystem, or routing every request to a small number of "owning" nodes. Each
+of these is operationally expensive and limits how Git fits into modern
+cloud-native infrastructure.
+
+The MVCC backend factors the persistent state of a repository into a small,
+self-describing set of files keyed by a single mutable pointer. An external
+orchestrator (e.g. a stateless server like Gitaly) can therefore keep the
+authoritative state in a shared, durable medium (such as object storage), pull
+just the files needed for a given operation onto a local node, and let Git
+operate against that local cache. When Git writes new state, the orchestrator
+publishes the resulting artifacts back to the shared medium and atomically
+advances the pointer.
+
+Goals
+~~~~~
+
+* Make Git's persistent state amenable to being pulled from and pushed back to
+  a durable shared medium by an external orchestrator, without Git itself
+  needing to know about the medium.
+
+* Provide a consistent, point-in-time view of refs and objects together. A
+  reader who pins to a particular state must see refs that resolve only to
+  objects which were already present in that state.
+
+* Keep the local working set small. The orchestrator is free to populate the
+  cache only with the artifacts referenced by the active manifest; Git treats
+  the cache as authoritative for those artifacts and never tries to fetch
+  more.
+
+* Allow writes to commit against an isolated manifest pointer file whose
+  value the orchestrator can inspect and publish without touching the
+  read-side pointer used by other readers on the same host.
+
+Non-goals
+~~~~~~~~~
+
+* This backend is not a promisor remote and does not implement partial-clone
+  semantics. All objects referenced by the manifest must be available locally.
+
+* This backend does not itself perform any network I/O. All communication
+  with the durable medium is the orchestrator's responsibility.
+
+Architecture at a glance
+------------------------
+
+The backend has two pluggable extension points that share the same underlying
+MVCC storage handle:
+
+* The object database extension (`extensions.objectStorage = mvcc`) installs an
+  ODB source that reads packfiles from the local cache directory and writes
+  new packfiles into the same cache directory.
+
+* The reference storage extension (`extensions.refStorage = mvcc`) installs a
+  ref backend that uses the reftable library's lower-level building blocks
+  (`reftable_writer`, `reftable_table`, `reftable_merged_table`) directly,
+  bypassing `reftable_stack` entirely. The manifest's `r:` entries are the
+  authoritative active set, so no on-disk `tables.list` file is needed.
+  Reflog and worktree support are intentionally omitted, since neither is
+  required by the kinds of stateless server deployments this backend is aimed
+  at.
+
+Both extensions cooperate through a single shared object: the MVCC storage
+handle, which is reference-counted and deduplicated by the repository's
+common directory. Any number of MVCC-backed extensions configured against
+the same repository therefore resolve to the same handle and share a single
+in-memory view of the manifest.
+
+----
++--------------------+      +-----------------------+
+| MVCC ODB source    |      | MVCC reference backend|
+| - reads packs      |      | - reads reftables     |
+| - writes packs     |      | - writes reftables    |
++----------+---------+      +-----------+-----------+
+           \                            /
+            \                          /
+             v                        v
+           +-------------------------------+
+           | Shared MVCC storage handle    |
+           | - manifest pointer            |
+           | - cache directory             |
+           | - atomic manifest activation  |
+           +---------------+---------------+
+                           |
+                           v
+                  +-----------------+
+                  | Local files     |
+                  |  - cache_dir    |
+                  |  - manifest_path|
+                  |    (optional)   |
+                  +-----------------+
+----
+
+Roles
+~~~~~
+
+* **Git** owns the manifest format, the cache layout, and the manifest pointer
+  invariants. Git never reaches out to a network: every artifact it reads or
+  writes is a local file.
+
+* **The orchestrator** owns the durable storage. It is responsible for
+  populating the cache with the artifacts referenced by the active manifest
+  before invoking Git, for providing an external manifest pointer file when
+  writes are expected, and for inspecting that pointer file afterwards in
+  order to publish the new manifest's transitive closure to the durable
+  medium.
+
+Manifests
+---------
+
+A manifest is a small text file enumerating the artifacts that constitute one
+consistent snapshot of the repository:
+
+----
+p: 3472ebb5128456d753dee031162e0a4daef8e0bd
+p: 86a2525d853315ebbeb6d3521c582b6cbc461783
+r: 0fc7ea9f0e2cb44a48b66bf1f5e26e3ff7b1f0c3a39c2c3128da6826dad8aafe
+r: e80c12f3a9b8b6541b3cb33b1be6cb1c2a1ef62dbed9b8c3f8e8a3a4b67c1d2e
+----
+
+* Lines starting with `p:` carry bare pack hashes. The corresponding local
+  files are `<hash>.pack`, `<hash>.idx`, and `<hash>.rev` under `pack/`.
+
+* Lines starting with `r:` carry SHA-256 hashes of reftable files. The
+  corresponding local file is `<hash>.ref` under `reftables/`.
+
+A single manifest snapshots both refs and objects together, so flipping the
+manifest pointer atomically advances both subsystems.
+
+Manifest bodies are content-addressed: each body is named by the hex SHA-256
+of its contents and stored under `manifests/<sha256>`. The body is immutable.
+
+The mutable `manifest` pointer file holds the SHA-256 of the currently active
+manifest body. It is rewritten atomically by `mvcc_storage_activate_manifest`
+using Git's lockfile machinery, so concurrent activators on the same
+filesystem are mutually excluded.
+
+Directory layout
+----------------
+
+All artifacts live under a single cache directory:
+
+----
+<cache_dir>/
+  manifest                       mutable pointer (hex SHA-256)
+  manifests/<sha256>             immutable manifest bodies
+  pack/<hash>.pack               immutable packs
+  pack/<hash>.idx
+  pack/<hash>.rev
+  reftables/<sha256>.ref         immutable reftables
+----
+
+The cache lives at `<commondir>/mvcc-cache`. All artifacts (packs, reftables,
+manifest bodies) are content-addressed, so it is safe for new files to land
+alongside existing ones; concurrent writers producing the same artifact
+cannot collide, and unreferenced files left behind by aborted writes do no
+harm. The orchestrator is responsible for reclaiming such files (see
+"Garbage collection" below).
+
+By default the mutable manifest pointer lives at `<cache_dir>/manifest`. The
+`GIT_MVCC_MANIFEST_PATH` environment variable can redirect manifest reads
+and writes to an external pointer file (see "Environment variables" below);
+this is the mechanism the orchestrator uses to isolate the pointer for a
+proposed write while letting the artifacts themselves land in the cache.
+
+Read path
+---------
+
+Reading an artifact resolves the file's path under the cache directory.
+Reads never fall back to network I/O: a missing file is a hard error that
+surfaces to the caller, indicating that the orchestrator has not populated
+the cache correctly.
+
+The manifest pointer is resolved with the following precedence:
+
+1. The `GIT_MVCC_MANIFEST` environment variable, if set, pins the current
+   manifest to a specific hash (snapshot pinning).
+
+2. The external pointer file named by `GIT_MVCC_MANIFEST_PATH`, if that
+   environment variable is set.
+
+3. The cache's own pointer file at `<cache_dir>/manifest`.
+
+The result is then used to locate the corresponding manifest body
+(`manifests/<sha256>`), which is parsed into the list of active packs and
+reftables.
+
+Write path
+----------
+
+When a write occurs, Git deposits the new files (packfiles, reftables, the
+new manifest body) directly into the cache directory. The new manifest is
+then activated by rewriting the manifest pointer file atomically (under a
+lockfile) so that subsequent reads see the new state. The pointer file
+that gets rewritten is the one selected by `GIT_MVCC_MANIFEST_PATH` if
+set, otherwise `<cache_dir>/manifest`.
+
+Writes are rejected whenever `GIT_MVCC_MANIFEST` is set. A pinned storage
+handle is read-only: writes that build on top of a pin would chain new state
+onto a snapshot the pin's author did not intend to extend.
+
+If a write is rejected (or otherwise abandoned) after Git has already
+written some artifacts, those artifacts remain in the cache. Because every
+artifact is content-addressed and the cache pointer was not advanced to
+reference them, the files are simply unreferenced; they will be reclaimed
+by the orchestrator's garbage collection.
+
+The orchestrator inspects the external manifest pointer file after Git
+exits, reads the new manifest SHA, walks the corresponding manifest body's
+transitive closure to determine which files need uploading, and arranges
+for the durable medium to advance to the new manifest. Once the durable
+advance has succeeded, the orchestrator updates the cache's own pointer
+file to match (so that subsequent local readers see the new state without
+needing the external pointer).
+
+MVCC / pinning
+--------------
+
+Setting `GIT_MVCC_MANIFEST` to a manifest version hash overrides every
+on-disk pointer for reads. Any process can therefore obtain a consistent,
+point-in-time view of the repository state simply by noting the hash printed
+after a flush and exporting it into the environment of readers.
+
+A pin makes the storage read-only for the lifetime of the process: any
+write attempt dies (see "Write path" above). `GIT_MVCC_MANIFEST` and
+`GIT_MVCC_MANIFEST_PATH` may coexist; the pin takes precedence for
+manifest resolution.
+
+This same mechanism is used internally during write transactions: the ODB
+transaction's `env()` callback writes the in-flight manifest body to disk
+(without activating it) and exports `GIT_MVCC_MANIFEST=<sha>` for child
+processes, so e.g. a pre-receive hook can resolve OIDs against the
+not-yet-published state. Child processes inherit the pin and are
+themselves read-only, which is the intended behaviour for hooks.
+
+Concurrency
+-----------
+
+The backends synchronize against concurrent writes via a lockfile around the
+manifest pointer:
+
+  1. The write is queued.
+
+  2. The new manifest is generated.
+
+  3. The manifest pointer is locked.
+
+  4. The locked pointer is checked to have the expected state that the new
+     manifest is based on.
+
+  5. If so, the lockfile is atomically comitted.
+
+The expected-old value used by the CAS is captured when resolving the in-memory
+manifest and is updated whenever a new manifest is activated by the current
+process. On CAS failure the in-process manifest cache is automatically
+invalidated, so that the next manifest resolution re-reads the pointer from
+disk and the caller can retry against the fresh state by re-acquiring the
+storage handle.
+
+Coordination across hosts is the orchestrator's responsibility (see
+"Gitaly integration" below).
+
+Read paths do not take a lock: the pointer file is rewritten via
+`rename(3p)`, so a reader either observes the old hash or the new one,
+never a torn write. Once the reader has the hash, the corresponding body
+is immutable.
+
+Environment variables
+---------------------
+
+`GIT_MVCC_MANIFEST`::
+	Pin reads to a specific manifest version hash. Overrides every
+	on-disk pointer file. Makes the storage handle read-only for the
+	lifetime of the process: any write attempt dies.
+
+`GIT_MVCC_MANIFEST_PATH`::
+	Path to an external manifest pointer file that replaces
+	`<cache_dir>/manifest` for both reads and writes. The file must
+	already exist and must be a non-empty regular file containing the
+	hex SHA-256 of the base manifest to chain on top of. It is the
+	orchestrator's responsibility to seed the file before invoking
+	Git. When unset, the cache's own pointer file is used.
+
+The two variables may coexist. When both are set, the pin governs reads
+(making the storage read-only) and the external pointer file is unused.
+
+Configuration
+-------------
+
+`extensions.objectStorage = mvcc://`::
+	Selects the MVCC-backed object database. The URL's path component
+	is unused: the cache directory is always `<commondir>/mvcc-cache`,
+	derived from the repository's common directory. Requires
+	`core.repositoryFormatVersion = 1`.
+
+`extensions.refStorage = mvcc://`::
+	Selects the MVCC-backed reference store. The URL's payload is
+	likewise unused. When both extensions are configured against the
+	same repository they automatically share a single storage handle
+	and therefore a single view of the manifest, regardless of the
+	(ignored) URL payloads.
+
+Gitaly integration
+------------------
+
+The preceding sections describe what Git itself implements. This section
+describes how Gitaly handles those primitives in a full RPC lifecycle.
+
+Lifecycle of a read-only RPC
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Read RPCs (for example `GetCommit`, `GetBlob`, or `FindRefs`) need a
+consistent point-in-time view of the repository but do not produce any
+new state. The corresponding lifecycle looks like this:
+
+----
+   Client            Gitaly                Durable storage         Git
+     |                 |                         |                  |
+     |--RPC----------->|                         |                  |
+     |                 |--GET manifest pointer-->|                  |
+     |                 |<--<sha>-----------------|                  |
+     |                 |                                            |
+     |                 |  (manifest body already cached locally?)   |
+     |                 |--GET manifests/<sha>--->|  if not          |
+     |                 |<--body------------------|                  |
+     |                 |                                            |
+     |                 |  (parse body, fetch missing dependencies)  |
+     |                 |--GET packs------------->|                  |
+     |                 |--GET reftables--------->|                  |
+     |                 |<--files-----------------|                  |
+     |                 |                                            |
+     |                 |--invoke Git with GIT_MVCC_MANIFEST=<sha>-->|
+     |                 |                                            |--read
+     |                 |                                            |  from
+     |                 |                                            |  cache
+     |                 |<------------------exit---------------------|
+     |<--response------|                                            |
+----
+
+Key properties:
+
+* Gitaly always resolves the durable pointer at the start of an RPC; it
+  never trusts a stale local cache pointer.
+
+* The prefetch step is idempotent. Manifest bodies, packs, and reftables
+  are immutable and content-addressed, so concurrent RPCs that need the
+  same artifact can race their downloads without coordination -- the
+  last writer to call `rename(3p)` on the cache file wins and produces a
+  byte-identical result.
+
+* No external manifest pointer is created. Reads see the cache.
+
+* The cache is purely additive. Files referenced by previous manifests
+  may remain alongside the current set; Git ignores any file not named
+  by the active manifest.
+
+* `GIT_MVCC_MANIFEST` allows Gitaly to execute several Git processes that may
+  observe a consistent snapshot of the repository, even with concurrent
+  writers.
+
+Lifecycle of a write RPC
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Write RPCs (for example `UserCommitFiles`, `UserCreateBranch`, or
+`PostReceivePack`) produce new state that must be made durable. To keep
+the proposed new state observable to Gitaly *before* it is published --
+so that Gitaly can inspect, validate, or even reject the changes without
+ever exposing them to other readers -- the write redirects the manifest
+pointer through a private file. The artifacts themselves still land in
+the cache, but the cache pointer is left untouched until Gitaly chooses
+to publish. The corresponding lifecycle is:
+
+----
+   Client            Gitaly                Durable storage         Git
+     |                 |                         |                  |
+     |--RPC----------->|                         |                  |
+     |                 |                                            |
+     |                 |  (same prefetch dance as for read RPCs)    |
+     |                 |                                            |
+     |                 |--write <base-sha> into <manifest-path>     |
+     |                 |--invoke Git with GIT_MVCC_MANIFEST_PATH    |
+     |                 |  =<manifest-path>------------------------->|
+     |                 |                                            |--write new files into
+     |                 |                                            |  <cache_dir>
+     |                 |                                            |--update <manifest-path>
+     |                 |                                            |  to point at the new
+     |                 |                                            |  manifest body
+     |                 |<------------------exit---------------------|
+     |                 |
+     |                 |--read <manifest-path> -> <new-sha>
+     |                 |--parse <cache_dir>/manifests/<new-sha>
+     |                 |--diff base manifest vs. new manifest
+     |                 |--PUT new files ------->|
+     |                 |
+     |                 |  inspect the proposed new state
+     |                 |  rm <manifest-path>
+     |                 |
+     |                 |--CAS durable manifest pointer-------->|
+     |                 |<--ok or conflict----------------------|
+     |                 |
+     |                 |  on success: update <cache_dir>/manifest to <new-sha>
+     |                 |  on conflict: reject/resolve/retry
+     |<--response------|
+----
+
+Key properties:
+
+* The proposed new state is fully self-describing. After Git exits, every fact
+  about the proposed new state -- which packs were added, which reftables were
+  rewritten, what refs the new manifest publishes -- can be derived from
+  `<manifest-path>` together with the corresponding manifest body in the cache.
+  Diffing base and new manifest enumerates the newly-referenced files.
+
+* Inspection happens against the *proposed* state, with the proposed new
+  manifest pinned. Gitaly does this by invoking Git commands with
+  `GIT_MVCC_MANIFEST=<new-sha>` (so reads are pinned to the exact
+  post-write snapshot even if another writer advances the durable pointer
+  concurrently). Typical checks include:
++
+  - **Access control**: the new refs and objects are policy-allowed for
+    the authenticated user.
+  - **Custom hooks**: server-side equivalents of pre-receive and
+    update hooks.
+
+* If any inspection step rejects the write, Gitaly deletes the external
+  pointer file and returns an error to the client. Nothing has been
+  uploaded; durable state is untouched; the cache pointer is untouched.
+  Any artifacts Git wrote into the cache remain there as unreferenced
+  files and are reclaimed by garbage collection. The rejection is
+  invisible to every other reader and writer.
+
+* Inspection runs after the upload. This ensures that any node can inspect the
+  new repository state.
+
+* The CAS at the manifest pointer is the only globally serializing
+  operation in the protocol. Everything else (artifact prefetch,
+  inspection, artifact upload) is naturally idempotent thanks to
+  content addressing.
+
+* Gitaly captures the pointer value (`<base-sha>` above) at prefetch
+  time and uses it as the CAS pre-condition at publish time. A
+  concurrent writer that advances the pointer in between causes the CAS
+  to fail; see "Failure modes" below. Note that the inspection step
+  does not need to refresh `<base-sha>`: the staged manifest was built
+  against `<base-sha>`, so that is the value the CAS must guard
+  against.
+
+* The external manifest pointer file must be seeded by Gitaly before Git
+  is invoked. Concretely, `<manifest-path>` must already exist and must
+  contain the hex SHA-256 of the base manifest the RPC is chaining on
+  top of. An empty or missing pointer file is a hard error: Git dies
+  before doing any work. This contract removes any ambiguity about what
+  "current" means inside Git when writing data, and avoids bad
+  interactions with `GIT_MVCC_MANIFEST` -- the external pointer is
+  authoritative.
+
+* Publishing the new SHA into the cache pointer after a successful CAS
+  lets subsequent RPCs on the same node read the new state without
+  re-resolving it. Skipping this step is correct but slower: the next
+  RPC will pull the new manifest body and any new packs/reftables from
+  durable storage as part of its own prefetch.
+
+Garbage collection
+~~~~~~~~~~~~~~~~~~
+
+Manifest bodies, packs, and reftables that are no longer referenced by the
+current manifest (or by any historical manifest the orchestrator wishes to
+retain for pinning) are reclaimable. Git itself never deletes these files;
+garbage collection is entirely the orchestrator's responsibility.
+
+A representative policy: retain the last N manifests durably and reclaim
+anything not in the union of their closures. This naturally supports
+`GIT_MVCC_MANIFEST`-based pinning for short-lived snapshot reads (the pin must
+obviously be older than the retained window). The same policy reclaims any
+files left behind in the cache by aborted writes, since by construction
+no retained manifest references them.
