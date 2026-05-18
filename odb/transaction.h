@@ -64,6 +64,20 @@ struct odb_transaction_write_pack_opts {
 	unsigned fsck_objects_only : 1;
 
 	/*
+	 * Skip the implicit tmp_objdir quarantine for this write_pack call.
+	 * The backend will not push odb_transaction_env() to the child, so
+	 * index-pack writes the resulting pack directly into the repository's
+	 * real object directory. Set this for callers (such as fetch-pack)
+	 * whose existing semantics rely on the pack being visible the moment
+	 * it lands -- e.g., because pack_lockfile paths are recorded and
+	 * unlinked later, or because identical-content refetches would
+	 * otherwise collide at migrate time. Has no effect for a transaction
+	 * begun with ODB_TRANSACTION_RECEIVE, which sets up its quarantine
+	 * eagerly at begin time.
+	 */
+	unsigned skip_quarantine : 1;
+
+	/*
 	 * To prevent races with concurrent repacks, the "files" backend creates
 	 * a lockfile that remains after the ODB transaction is committed. This
 	 * lockfile is expected to be removed only after the references are

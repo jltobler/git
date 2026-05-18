@@ -1700,7 +1700,8 @@ static int odb_transaction_files_write_pack(struct odb_transaction *base,
 		strvec_push(&child.args, opts->shallow_file);
 	}
 
-	strvec_pushv(&child.env, odb_transaction_env(base));
+	if (!opts->skip_quarantine)
+		strvec_pushv(&child.env, odb_transaction_env(base));
 
 	if (ntohl(hdr.hdr_entries) < opts->unpack_limit) {
 		strvec_push(&child.args, "unpack-objects");
