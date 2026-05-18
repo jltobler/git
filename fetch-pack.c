@@ -883,35 +883,22 @@ static void create_promisor_file(const char *keep_name,
 	strbuf_release(&promisor_name);
 }
 
-static void add_index_pack_keep_option(struct strvec *args)
-{
-	char hostname[HOST_NAME_MAX + 1];
-
-	if (xgethostname(hostname, sizeof(hostname)))
-		xsnprintf(hostname, sizeof(hostname), "localhost");
-	strvec_pushf(args, "--keep=fetch-pack %"PRIuMAX " on %s",
-		     (uintmax_t)getpid(), hostname);
-}
-
 /*
- * If packfile URIs were provided, pass a non-NULL pointer to index_pack_args.
- * The strings to pass as the --index-pack-arg arguments to http-fetch will be
- * stored there. (It must be freed by the caller.)
+ * Set defer_link_check when additional packs (such as packfile-URIs) will be
+ * received after this one; the inline pack cannot perform an index-pack
+ * link check in that case because the referenced objects may not be present
+ * until later packs land.
  */
 static int get_pack(struct fetch_pack_args *args,
 		    int xd[2], struct string_list *pack_lockfiles,
-		    struct strvec *index_pack_args,
+		    int defer_link_check,
 		    struct ref **sought, int nr_sought,
 		    struct oidset *gitmodules_oids,
 		    struct odb_transaction *transaction)
 {
 	struct async demux;
-	int do_keep = args->keep_pack;
-	const char *cmd_name;
-	struct pack_header header;
-	int pass_header = 0;
-	struct child_process cmd = CHILD_PROCESS_INIT;
-	int fsck_objects = 0;
+	int fsck_objects;
+	struct odb_transaction_write_pack_opts opts = { 0 };
 	int ret;
 
 	memset(&demux, 0, sizeof(demux));
@@ -933,183 +920,58 @@ static int get_pack(struct fetch_pack_args *args,
 	fsck_objects = fetch_pack_fsck_objects();
 
 	/*
-	 * When the caller is not capturing index-pack args for packfile-URI
-	 * replay, ingest the inline pack through the ODB transaction. The
-	 * backend chooses between unpack-objects and index-pack based on the
-	 * pack header and opts->unpack_limit.
+	 * When more packs will follow (packfile-URIs), the inline pack
+	 * cannot run an index-pack link check or the index-pack --strict
+	 * fsck, because referenced objects may live in packs we have not
+	 * received yet.
 	 */
-	if (transaction && !index_pack_args) {
-		struct odb_transaction_write_pack_opts opts = {
-			.fsck_msg_types = fsck_msg_types.buf,
-			.shallow_file = alternate_shallow_file,
-			.pack_keep_msg = (args->lock_pack || unpack_limit)
-					 ? "fetch-pack" : NULL,
-			.unpack_limit = (args->keep_pack ||
-					 args->from_promisor ||
-					 fsck_objects) ? 0 : unpack_limit,
-			.fsck_objects = fsck_objects,
-			.fsck_objects_only = args->from_promisor,
-			.from_promisor = args->from_promisor,
-			.check_self_contained_and_connected =
-				args->check_self_contained_and_connected,
-			.use_thin_pack = args->use_thin_pack,
-			.verbose = !args->quiet && !args->no_progress,
-			.quiet = args->quiet || args->no_progress,
-			.gitmodules_oids = gitmodules_oids,
-			.skip_quarantine = 1,
-		};
-
-		sigchain_push(SIGPIPE, SIG_IGN);
-		ret = odb_transaction_write_pack(transaction, demux.out, &opts);
-		sigchain_pop(SIGPIPE);
-
-		if (ret)
-			die(_("fetch-pack: %s"),
-			    opts.error_msg ? opts.error_msg
-					   : "index-pack failed");
-
-		if (opts.pack_lockfile && pack_lockfiles)
-			string_list_append(pack_lockfiles,
-					   get_tempfile_path(opts.pack_lockfile));
-
-		if (args->check_self_contained_and_connected)
-			args->self_contained_and_connected =
-				(opts.index_pack_exit_status == 0);
-
-		if (!use_sideband)
-			xd[0] = -1;
-		if (use_sideband && finish_async(&demux))
-			die(_("error in sideband demultiplexer"));
-
-		if (opts.pack_lockfile && pack_lockfiles &&
-		    pack_lockfiles->nr && args->from_promisor)
-			create_promisor_file(get_tempfile_path(opts.pack_lockfile),
-					     sought, nr_sought);
-
-		return 0;
-	}
-
-	if (!args->keep_pack && unpack_limit && !index_pack_args) {
-
-		if (read_pack_header(demux.out, &header))
-			die(_("protocol error: bad pack header"));
-		pass_header = 1;
-		if (ntohl(header.hdr_entries) < unpack_limit)
-			do_keep = 0;
-		else
-			do_keep = 1;
-	}
-
-	if (alternate_shallow_file) {
-		strvec_push(&cmd.args, "--shallow-file");
-		strvec_push(&cmd.args, alternate_shallow_file);
-	}
-
-	if (do_keep || args->from_promisor || index_pack_args || fsck_objects) {
-		if (pack_lockfiles || fsck_objects)
-			cmd.out = -1;
-		cmd_name = "index-pack";
-		strvec_push(&cmd.args, cmd_name);
-		strvec_push(&cmd.args, "--stdin");
-		if (!args->quiet && !args->no_progress)
-			strvec_push(&cmd.args, "-v");
-		if (args->use_thin_pack)
-			strvec_push(&cmd.args, "--fix-thin");
-		if ((do_keep || index_pack_args) && (args->lock_pack || unpack_limit))
-			add_index_pack_keep_option(&cmd.args);
-		if (!index_pack_args && args->check_self_contained_and_connected)
-			strvec_push(&cmd.args, "--check-self-contained-and-connected");
-		else
-			/*
-			 * We cannot perform any connectivity checks because
-			 * not all packs have been downloaded; let the caller
-			 * have this responsibility.
-			 */
-			args->check_self_contained_and_connected = 0;
-
-		if (args->from_promisor)
-			/*
-			 * create_promisor_file() may be called afterwards but
-			 * we still need index-pack to know that this is a
-			 * promisor pack. For example, if transfer.fsckobjects
-			 * is true, index-pack needs to know that .gitmodules
-			 * is a promisor object (so that it won't complain if
-			 * it is missing).
-			 */
-			strvec_push(&cmd.args, "--promisor");
-	}
-	else {
-		cmd_name = "unpack-objects";
-		strvec_push(&cmd.args, cmd_name);
-		if (args->quiet || args->no_progress)
-			strvec_push(&cmd.args, "-q");
+	if (defer_link_check)
 		args->check_self_contained_and_connected = 0;
-	}
 
-	if (pass_header)
-		strvec_pushf(&cmd.args, "--pack_header=%"PRIu32",%"PRIu32,
-			     ntohl(header.hdr_version),
-				 ntohl(header.hdr_entries));
-	if (fsck_objects) {
-		if (args->from_promisor || index_pack_args)
-			/*
-			 * We cannot use --strict in index-pack because it
-			 * checks both broken objects and links, but we only
-			 * want to check for broken objects.
-			 */
-			strvec_push(&cmd.args, "--fsck-objects");
-		else
-			strvec_pushf(&cmd.args, "--strict%s",
-				     fsck_msg_types.buf);
-	}
-
-	if (index_pack_args)
-		strvec_pushv(index_pack_args, cmd.args.v);
+	opts.fsck_msg_types = fsck_msg_types.buf;
+	opts.shallow_file = alternate_shallow_file;
+	opts.pack_keep_msg = (args->lock_pack || unpack_limit)
+			    ? "fetch-pack" : NULL;
+	opts.unpack_limit = (args->keep_pack ||
+			     args->from_promisor ||
+			     fsck_objects ||
+			     defer_link_check) ? 0 : unpack_limit;
+	opts.fsck_objects = fsck_objects;
+	opts.fsck_objects_only = args->from_promisor || defer_link_check;
+	opts.from_promisor = args->from_promisor;
+	opts.check_self_contained_and_connected =
+		args->check_self_contained_and_connected;
+	opts.use_thin_pack = args->use_thin_pack;
+	opts.verbose = !args->quiet && !args->no_progress;
+	opts.quiet = args->quiet || args->no_progress;
+	opts.gitmodules_oids = gitmodules_oids;
+	opts.skip_quarantine = 1;
 
 	sigchain_push(SIGPIPE, SIG_IGN);
+	ret = odb_transaction_write_pack(transaction, demux.out, &opts);
+	sigchain_pop(SIGPIPE);
 
-	cmd.in = demux.out;
-	cmd.git_cmd = 1;
-	if (start_command(&cmd))
-		die(_("fetch-pack: unable to fork off %s"), cmd_name);
-	if (do_keep && (pack_lockfiles || fsck_objects)) {
-		int is_well_formed;
-		char *pack_lockfile = index_pack_lockfile(the_repository,
-							  cmd.out,
-							  &is_well_formed);
+	if (ret)
+		die(_("fetch-pack: %s"),
+		    opts.error_msg ? opts.error_msg : "index-pack failed");
 
-		if (!is_well_formed)
-			die(_("fetch-pack: invalid index-pack output"));
-		if (pack_lockfiles && pack_lockfile)
-			string_list_append_nodup(pack_lockfiles, pack_lockfile);
-		else
-			free(pack_lockfile);
-		parse_gitmodules_oids(the_repository, cmd.out, gitmodules_oids);
-		close(cmd.out);
-	}
+	if (opts.pack_lockfile && pack_lockfiles)
+		string_list_append(pack_lockfiles,
+				   get_tempfile_path(opts.pack_lockfile));
+
+	if (args->check_self_contained_and_connected)
+		args->self_contained_and_connected =
+			(opts.index_pack_exit_status == 0);
 
 	if (!use_sideband)
-		/* Closed by start_command() */
 		xd[0] = -1;
-
-	ret = finish_command(&cmd);
-	if (!ret || (args->check_self_contained_and_connected && ret == 1))
-		args->self_contained_and_connected =
-			args->check_self_contained_and_connected &&
-			ret == 0;
-	else
-		die(_("%s failed"), cmd_name);
 	if (use_sideband && finish_async(&demux))
 		die(_("error in sideband demultiplexer"));
 
-	sigchain_pop(SIGPIPE);
-
-	/*
-	 * Now that index-pack has succeeded, write the promisor file using the
-	 * obtained .keep filename if necessary
-	 */
-	if (do_keep && pack_lockfiles && pack_lockfiles->nr && args->from_promisor)
-		create_promisor_file(pack_lockfiles->items[0].string, sought, nr_sought);
+	if (opts.pack_lockfile && pack_lockfiles &&
+	    pack_lockfiles->nr && args->from_promisor)
+		create_promisor_file(get_tempfile_path(opts.pack_lockfile),
+				     sought, nr_sought);
 
 	return 0;
 }
@@ -1269,7 +1131,7 @@ static struct ref *do_fetch_pack(struct fetch_pack_args *args,
 	fsck_options_init(&fsck_options, the_repository, FSCK_OPTIONS_MISSING_GITMODULES);
 
 	odb_transaction_begin_or_die(r->objects, &transaction, 0);
-	if (get_pack(args, fd, pack_lockfiles, NULL, sought, nr_sought,
+	if (get_pack(args, fd, pack_lockfiles, 0, sought, nr_sought,
 		     &fsck_options.gitmodules_found, transaction))
 		die(_("git fetch-pack: fetch failed."));
 	if (fsck_finish(&fsck_options))
@@ -1713,7 +1575,6 @@ static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
 	int received_ready = 0;
 	struct string_list packfile_uris = STRING_LIST_INIT_DUP;
 	int i;
-	struct strvec index_pack_args = STRVEC_INIT;
 	const char *promisor_remote_config;
 	struct odb_transaction *transaction = NULL;
 
@@ -1858,18 +1719,11 @@ static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
 			close(fd[1]);
 			fd[1] = -1;
 
-			/*
-			 * Use an ODB transaction for the inline pack only when
-			 * no packfile-URIs follow; the URI loop below still
-			 * spawns http-fetch/index-pack inline against the
-			 * real object store.
-			 */
-			if (!packfile_uris.nr)
-				odb_transaction_begin_or_die(r->objects,
-							     &transaction, 0);
+			odb_transaction_begin_or_die(r->objects,
+						     &transaction, 0);
 
 			if (get_pack(args, fd, pack_lockfiles,
-				     packfile_uris.nr ? &index_pack_args : NULL,
+				     packfile_uris.nr > 0,
 				     sought, nr_sought,
 				     &fsck_options.gitmodules_found,
 				     transaction))
@@ -1884,63 +1738,66 @@ static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
 	}
 
 	for (i = 0; i < packfile_uris.nr; i++) {
-		int j;
-		struct child_process cmd = CHILD_PROCESS_INIT;
-		char packname[GIT_MAX_HEXSZ + 1];
-		const char *uri = packfile_uris.items[i].string +
-			the_hash_algo->hexsz + 1;
+		struct child_process http_fetch = CHILD_PROCESS_INIT;
+		struct odb_transaction_write_pack_opts opts = { 0 };
+		const char *expected_hash = packfile_uris.items[i].string;
+		const char *uri = expected_hash + the_hash_algo->hexsz + 1;
+		const char *base, *path;
+		int ret;
 
-		strvec_push(&cmd.args, "http-fetch");
-		strvec_pushf(&cmd.args, "--packfile=%.*s",
-			     (int) the_hash_algo->hexsz,
-			     packfile_uris.items[i].string);
-		for (j = 0; j < index_pack_args.nr; j++)
-			strvec_pushf(&cmd.args, "--index-pack-arg=%s",
-				     index_pack_args.v[j]);
-		strvec_push(&cmd.args, uri);
-		cmd.git_cmd = 1;
-		cmd.no_stdin = 1;
-		cmd.out = -1;
-		if (start_command(&cmd))
+		strvec_push(&http_fetch.args, "http-fetch");
+		strvec_pushf(&http_fetch.args, "--packfile=%.*s",
+			     (int) the_hash_algo->hexsz, expected_hash);
+		strvec_push(&http_fetch.args, "--stdout");
+		strvec_push(&http_fetch.args, uri);
+		http_fetch.git_cmd = 1;
+		http_fetch.no_stdin = 1;
+		http_fetch.out = -1;
+		if (start_command(&http_fetch))
 			die("fetch-pack: unable to spawn http-fetch");
 
-		if (read_in_full(cmd.out, packname, 5) < 0 ||
-		    memcmp(packname, "keep\t", 5))
-			die("fetch-pack: expected keep then TAB at start of http-fetch output");
+		opts.fsck_msg_types = fsck_msg_types.buf;
+		opts.fsck_objects = fetch_pack_fsck_objects();
+		opts.fsck_objects_only = 1;
+		opts.use_thin_pack = args->use_thin_pack;
+		opts.pack_keep_msg = "fetch-pack";
+		opts.unpack_limit = 0;
+		opts.gitmodules_oids = &fsck_options.gitmodules_found;
+		opts.skip_quarantine = 1;
 
-		if (read_in_full(cmd.out, packname,
-				 the_hash_algo->hexsz + 1) < 0 ||
-		    packname[the_hash_algo->hexsz] != '\n')
-			die("fetch-pack: expected hash then LF at end of http-fetch output");
+		sigchain_push(SIGPIPE, SIG_IGN);
+		ret = odb_transaction_write_pack(transaction, http_fetch.out,
+						 &opts);
+		sigchain_pop(SIGPIPE);
 
-		packname[the_hash_algo->hexsz] = '\0';
+		if (ret)
+			die("fetch-pack: %s for %s",
+			    opts.error_msg ? opts.error_msg
+					   : "index-pack failed",
+			    uri);
 
-		parse_gitmodules_oids(the_repository, cmd.out,
-				      &fsck_options.gitmodules_found);
+		if (finish_command(&http_fetch))
+			die("fetch-pack: unable to finish http-fetch for %s", uri);
 
-		close(cmd.out);
+		if (!opts.pack_lockfile)
+			die("fetch-pack: missing pack name for %s", uri);
 
-		if (finish_command(&cmd))
-			die("fetch-pack: unable to finish http-fetch");
-
-		if (memcmp(packfile_uris.items[i].string, packname,
-			   the_hash_algo->hexsz))
+		path = get_tempfile_path(opts.pack_lockfile);
+		base = strrchr(path, '/');
+		base = base ? base + 1 : path;
+		if (!skip_prefix(base, "pack-", &base) ||
+		    memcmp(base, expected_hash, the_hash_algo->hexsz))
 			die("fetch-pack: pack downloaded from %s does not match expected hash %.*s",
-			    uri, (int) the_hash_algo->hexsz,
-			    packfile_uris.items[i].string);
+			    uri, (int) the_hash_algo->hexsz, expected_hash);
 
-		string_list_append_nodup(pack_lockfiles,
-					 xstrfmt("%s/pack/pack-%s.keep",
-						 repo_get_object_directory(the_repository),
-						 packname));
+		string_list_append(pack_lockfiles, path);
 	}
 	string_list_clear(&packfile_uris, 0);
-	strvec_clear(&index_pack_args);
 
 	if (fsck_finish(&fsck_options))
 		die("fsck failed");
 
-	if (transaction && odb_transaction_commit(transaction))
+	if (odb_transaction_commit(transaction))
 		die(_("git fetch-pack: failed to commit ODB transaction"));
 
 	if (negotiator)
