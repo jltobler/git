@@ -2295,15 +2295,23 @@ static struct tempfile *pack_lockfile;
 static const char *unpack_with_sideband(struct shallow_info *si,
 					struct odb_transaction *transaction)
 {
+	char hostname[HOST_NAME_MAX + 1];
+	struct strbuf keep_msg = STRBUF_INIT;
 	struct odb_transaction_write_pack_opts opts = {
 		.fsck_msg_types = fsck_msg_types.buf,
 		.max_pack_size = max_input_size,
 		.unpack_limit = unpack_limit,
 		.use_thin_pack = !reject_thin,
-		.pack_keep_msg = "receive-pack",
 		.quiet = quiet,
 	};
 	struct async muxer;
+	const char *err;
+
+	if (xgethostname(hostname, sizeof(hostname)))
+		xsnprintf(hostname, sizeof(hostname), "localhost");
+	strbuf_addf(&keep_msg, "receive-pack %" PRIuMAX " on %s",
+		    (uintmax_t)getpid(), hostname);
+	opts.pack_keep_msg = keep_msg.buf;
 
 	opts.fsck_objects = (receive_fsck_objects >= 0
 			  ? receive_fsck_objects
@@ -2318,15 +2326,18 @@ static const char *unpack_with_sideband(struct shallow_info *si,
 
 	if (!use_sideband) {
 		odb_transaction_write_pack(transaction, 0, &opts);
-		return opts.error_msg;
+		err = opts.error_msg;
+		goto out;
 	}
 
 	use_keepalive = KEEPALIVE_AFTER_NUL;
 	memset(&muxer, 0, sizeof(muxer));
 	muxer.proc = copy_to_sideband;
 	muxer.in = -1;
-	if (start_async(&muxer))
-		return 0;
+	if (start_async(&muxer)) {
+		err = NULL;
+		goto out;
+	}
 
 	opts.err_fd = muxer.in;
 	odb_transaction_write_pack(transaction, 0, &opts);
@@ -2334,7 +2345,11 @@ static const char *unpack_with_sideband(struct shallow_info *si,
 	finish_async(&muxer);
 	pack_lockfile = opts.pack_lockfile;
 
-	return opts.error_msg;
+	err = opts.error_msg;
+
+out:
+	strbuf_release(&keep_msg);
+	return err;
 }
 
 static void prepare_shallow_update(struct shallow_info *si)

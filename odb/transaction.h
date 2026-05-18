@@ -17,9 +17,11 @@ struct odb_transaction_write_pack_opts {
 
 	/*
 	 * When non-NULL, the backend emits
-	 *   --keep=<pack_keep_msg> <pid> on <host>
+	 *   --keep=<pack_keep_msg>
 	 * to index-pack, which causes a .keep file with that contents to be
-	 * written alongside the resulting pack. Leave NULL to skip --keep.
+	 * written alongside the resulting pack. The caller is responsible for
+	 * including any PID/hostname diagnostic in the string; the backend
+	 * passes it through verbatim. Leave NULL to skip --keep.
 	 */
 	const char *pack_keep_msg;
 

@@ -1723,21 +1723,14 @@ static int odb_transaction_files_write_pack(struct odb_transaction *base,
 			return -1;
 		}
 	} else {
-		char hostname[HOST_NAME_MAX + 1];
 		char *lockfile;
 
 		strvec_pushl(&child.args, "index-pack", "--stdin", NULL);
 		push_header_arg(&child.args, &hdr);
 
-		if (opts->pack_keep_msg) {
-			if (xgethostname(hostname, sizeof(hostname)))
-				xsnprintf(hostname, sizeof(hostname), "localhost");
-			strvec_pushf(&child.args,
-				     "--keep=%s %" PRIuMAX " on %s",
-				     opts->pack_keep_msg,
-				     (uintmax_t)getpid(),
-				     hostname);
-		}
+		if (opts->pack_keep_msg)
+			strvec_pushf(&child.args, "--keep=%s",
+				     opts->pack_keep_msg);
 
 		if (opts->verbose)
 			strvec_push(&child.args, "-v");
