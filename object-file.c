@@ -1782,7 +1782,9 @@ static int odb_transaction_files_write_pack(struct odb_transaction *base,
 		close(child.out);
 
 		status = finish_command(&child);
-		if (status) {
+		opts->index_pack_exit_status = status;
+		if (status &&
+		    !(opts->check_self_contained_and_connected && status == 1)) {
 			opts->error_msg = "index-pack abnormal exit";
 			return -1;
 		}

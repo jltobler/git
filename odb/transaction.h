@@ -29,6 +29,14 @@ struct odb_transaction_write_pack_opts {
 	int err_fd;
 	int quiet;
 
+	/*
+	 * On return, set to the exit status of the index-pack child process
+	 * (0 if unpack-objects was used or the index-pack branch was not
+	 * taken). With check_self_contained_and_connected, exit status 1 is
+	 * a soft failure and the call still returns success.
+	 */
+	int index_pack_exit_status;
+
 	/* Pass --fix-thin to index-pack. */
 	unsigned use_thin_pack : 1;
 
@@ -38,7 +46,13 @@ struct odb_transaction_write_pack_opts {
 	/* Pass --promisor to index-pack. */
 	unsigned from_promisor : 1;
 
-	/* Pass --check-self-contained-and-connected to index-pack. */
+	/*
+	 * Pass --check-self-contained-and-connected to index-pack. When set,
+	 * an index-pack exit status of 1 is treated as success (the pack is
+	 * fine but the connectivity invariant did not hold); the exit code
+	 * is reported back via "index_pack_exit_status" so the caller can
+	 * distinguish.
+	 */
 	unsigned check_self_contained_and_connected : 1;
 
 	/*
