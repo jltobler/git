@@ -1638,9 +1638,11 @@ static void final(const char *final_pack_name, const char *curr_pack_name,
 			    hash, "idx", 1);
 
 	if (do_fsck_object && startup_info->have_repository) {
-		struct odb_source_files *files =
-			odb_source_files_downcast(the_repository->objects->sources);
-		packfile_store_load_pack(files->packed, final_index_name, 0);
+		struct odb_source *primary = the_repository->objects->sources;
+		if (primary && primary->type == ODB_SOURCE_FILES) {
+			struct odb_source_files *files = odb_source_files_downcast(primary);
+			packfile_store_load_pack(files->packed, final_index_name, 0);
+		}
 	}
 
 	if (!from_stdin) {

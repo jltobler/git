@@ -1548,8 +1548,13 @@ static int want_cruft_object_mtime(struct repository *r,
 	struct odb_source *source;
 
 	for (source = r->objects->sources; source; source = source->next) {
-		struct odb_source_files *files = odb_source_files_downcast(source);
-		struct packed_git **cache = packfile_store_get_kept_pack_cache(files->packed, flags);
+		struct odb_source_files *files;
+		struct packed_git **cache;
+
+		if (source->type != ODB_SOURCE_FILES)
+			continue;
+		files = odb_source_files_downcast(source);
+		cache = packfile_store_get_kept_pack_cache(files->packed, flags);
 
 		for (; *cache; cache++) {
 			struct packed_git *p = *cache;
@@ -4133,7 +4138,10 @@ static void add_cruft_object_entry(const struct object_id *oid, enum object_type
 			int found = 0;
 
 			for (; !found && source; source = source->next) {
-				struct odb_source_files *files = odb_source_files_downcast(source);
+				struct odb_source_files *files;
+				if (source->type != ODB_SOURCE_FILES)
+					continue;
+				files = odb_source_files_downcast(source);
 				if (!odb_source_read_object_info(&files->loose->base, oid, NULL, 0))
 					found = 1;
 			}
@@ -4496,12 +4504,19 @@ static void add_objects_in_unpacked_packs(void)
 
 	odb_prepare_alternates(to_pack.repo->objects);
 	for (source = to_pack.repo->objects->sources; source; source = source->next) {
-		struct odb_source_files *files = odb_source_files_downcast(source);
+		struct odb_source *packed_source;
 
 		if (!source->local)
 			continue;
 
-		if (odb_source_for_each_object(&files->packed->base, &oi,
+		if (source->type == ODB_SOURCE_FILES) {
+			struct odb_source_files *files = odb_source_files_downcast(source);
+			packed_source = &files->packed->base;
+		} else {
+			packed_source = source;
+		}
+
+		if (odb_source_for_each_object(packed_source, &oi,
 					       add_object_in_unpacked_pack, NULL, &opts))
 			die(_("cannot open pack index"));
 	}

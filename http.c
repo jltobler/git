@@ -2645,9 +2645,12 @@ cleanup:
 void http_install_packfile(struct packed_git *p,
 			   struct packfile_list *list_to_remove_from)
 {
-	struct odb_source_files *files = odb_source_files_downcast(the_repository->objects->sources);
+	struct odb_source *primary = the_repository->objects->sources;
 	packfile_list_remove(list_to_remove_from, p);
-	packfile_store_add_pack(files->packed, p);
+	if (primary && primary->type == ODB_SOURCE_FILES) {
+		struct odb_source_files *files = odb_source_files_downcast(primary);
+		packfile_store_add_pack(files->packed, p);
+	}
 }
 
 struct http_pack_request *new_http_pack_request(

@@ -827,27 +827,35 @@ void clear_incremental_midx_files_ext(struct odb_source_packed *source, const ch
 
 void clear_midx_file(struct repository *r)
 {
-	struct odb_source_files *files = odb_source_files_downcast(r->objects->sources);
+	struct odb_source *primary = r->objects ? r->objects->sources : NULL;
+	struct odb_source_files *files = (primary && primary->type == ODB_SOURCE_FILES)
+		? odb_source_files_downcast(primary) : NULL;
 	struct strbuf midx = STRBUF_INIT;
 
-	get_midx_filename(files->packed, &midx);
+	if (files)
+		get_midx_filename(files->packed, &midx);
 
 	if (r->objects) {
 		struct odb_source *source;
 
 		for (source = r->objects->sources; source; source = source->next) {
-			struct odb_source_files *files = odb_source_files_downcast(source);
-			if (files->packed->midx)
-				close_midx(files->packed->midx);
-			files->packed->midx = NULL;
+			struct odb_source_files *src_files;
+			if (source->type != ODB_SOURCE_FILES)
+				continue;
+			src_files = odb_source_files_downcast(source);
+			if (src_files->packed->midx)
+				close_midx(src_files->packed->midx);
+			src_files->packed->midx = NULL;
 		}
 	}
 
-	if (remove_path(midx.buf))
+	if (midx.len && remove_path(midx.buf))
 		die(_("failed to clear multi-pack-index at %s"), midx.buf);
 
-	clear_midx_files_ext(files->packed, MIDX_EXT_BITMAP, NULL);
-	clear_midx_files_ext(files->packed, MIDX_EXT_REV, NULL);
+	if (files) {
+		clear_midx_files_ext(files->packed, MIDX_EXT_BITMAP, NULL);
+		clear_midx_files_ext(files->packed, MIDX_EXT_REV, NULL);
+	}
 
 	strbuf_release(&midx);
 }

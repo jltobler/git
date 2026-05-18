@@ -402,8 +402,6 @@ int cmd_repack(int argc,
 	}
 
 	if (!names.nr) {
-		struct odb_source_files *files = odb_source_files_downcast(repo->objects->sources);
-
 		if (!po_args.quiet)
 			printf_ln(_("Nothing new to pack."));
 		/*
@@ -419,8 +417,15 @@ int cmd_repack(int argc,
 		 * midx_has_unknown_packs() will make the decision for
 		 * us.
 		 */
-		if (!get_multi_pack_index(files->packed))
+		if (repo->objects->sources &&
+		    repo->objects->sources->type == ODB_SOURCE_FILES) {
+			struct odb_source_files *files =
+				odb_source_files_downcast(repo->objects->sources);
+			if (!get_multi_pack_index(files->packed))
+				midx_must_contain_cruft = 1;
+		} else {
 			midx_must_contain_cruft = 1;
+		}
 	}
 
 	if (pack_everything & PACK_CRUFT) {
@@ -562,7 +567,9 @@ int cmd_repack(int argc,
 	if (run_update_server_info)
 		update_server_info(repo, 0);
 
-	if (git_env_bool(GIT_TEST_MULTI_PACK_INDEX, 0)) {
+	if (git_env_bool(GIT_TEST_MULTI_PACK_INDEX, 0) &&
+	    repo->objects->sources &&
+	    repo->objects->sources->type == ODB_SOURCE_FILES) {
 		struct odb_source_files *files = odb_source_files_downcast(repo->objects->sources);
 		unsigned flags = 0;
 

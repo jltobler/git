@@ -711,8 +711,12 @@ static int open_midx_bitmap(struct repository *r,
 
 	odb_prepare_alternates(r->objects);
 	for (source = r->objects->sources; source; source = source->next) {
-		struct odb_source_files *files = odb_source_files_downcast(source);
-		struct multi_pack_index *midx = get_multi_pack_index(files->packed);
+		struct odb_source_files *files;
+		struct multi_pack_index *midx;
+		if (source->type != ODB_SOURCE_FILES)
+			continue;
+		files = odb_source_files_downcast(source);
+		midx = get_multi_pack_index(files->packed);
 		if (midx && !open_midx_bitmap_1(bitmap_git, midx))
 			ret = 0;
 	}

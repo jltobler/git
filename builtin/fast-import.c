@@ -877,7 +877,9 @@ static void end_packfile(void)
 	running = 1;
 	clear_delta_base_cache();
 	if (object_count) {
-		struct odb_source_files *files = odb_source_files_downcast(pack_data->repo->objects->sources);
+		struct odb_source *primary = pack_data->repo->objects->sources;
+		struct odb_source_files *files = (primary && primary->type == ODB_SOURCE_FILES)
+			? odb_source_files_downcast(primary) : NULL;
 		struct packed_git *new_p;
 		struct object_id cur_pack_oid;
 		char *idx_name;
@@ -903,7 +905,7 @@ static void end_packfile(void)
 		idx_name = keep_pack(create_index());
 
 		/* Register the packfile with core git's machinery. */
-		new_p = packfile_store_load_pack(files->packed, idx_name, 1);
+		new_p = files ? packfile_store_load_pack(files->packed, idx_name, 1) : NULL;
 		if (!new_p)
 			die(_("core Git rejected index %s"), idx_name);
 		all_packs[pack_id] = new_p;
@@ -984,7 +986,10 @@ static int store_object(
 	}
 
 	for (source = the_repository->objects->sources; source; source = source->next) {
-		struct odb_source_files *files = odb_source_files_downcast(source);
+		struct odb_source_files *files;
+		if (source->type != ODB_SOURCE_FILES)
+			continue;
+		files = odb_source_files_downcast(source);
 
 		if (!packfile_list_find_oid(packfile_store_get_packs(files->packed), &oid))
 			continue;
@@ -1191,7 +1196,10 @@ static void stream_blob(uintmax_t len, struct object_id *oidout, uintmax_t mark)
 	}
 
 	for (source = the_repository->objects->sources; source; source = source->next) {
-		struct odb_source_files *files = odb_source_files_downcast(source);
+		struct odb_source_files *files;
+		if (source->type != ODB_SOURCE_FILES)
+			continue;
+		files = odb_source_files_downcast(source);
 
 		if (!packfile_list_find_oid(packfile_store_get_packs(files->packed), &oid))
 			continue;
