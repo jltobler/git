@@ -4,6 +4,7 @@
 #include "dir.h"
 #include "fsck.h"
 #include "git-zlib.h"
+#include "list-objects-filter-options.h"
 #include "mergesort.h"
 #include "midx.h"
 #include "odb/source-packed.h"
@@ -304,6 +305,37 @@ static bool should_exclude_pack(struct packed_git *p, enum odb_for_each_object_f
 	return false;
 }
 
+struct bitmapped_for_each_object_data {
+	struct odb_source_packed *packed;
+	const struct object_info *request;
+	const struct odb_for_each_object_options *opts;
+	odb_for_each_object_cb cb;
+	void *cb_data;
+};
+
+static int bitmapped_for_each_object(const struct object_id *oid,
+				     enum object_type type UNUSED,
+				     int flags UNUSED,
+				     uint32_t hash UNUSED,
+				     struct packed_git *pack,
+				     off_t offset,
+				     void *cb_data)
+{
+	struct bitmapped_for_each_object_data *data = cb_data;
+
+	if (should_exclude_pack(pack, data->opts->flags))
+		return 0;
+
+	if (data->request) {
+		struct object_info oi = *data->request;
+		if (packed_object_info(data->packed, pack, offset, &oi) < 0)
+			return -1;
+		return data->cb(oid, &oi, data->cb_data);
+	}
+
+	return data->cb(oid, NULL, data->cb_data);
+}
+
 static int odb_source_packed_for_each_object(struct odb_source *source,
 					     const struct object_info *request,
 					     odb_for_each_object_cb cb,
@@ -317,11 +349,29 @@ static int odb_source_packed_for_each_object(struct odb_source *source,
 		.cb = cb,
 		.cb_data = cb_data,
 	};
+	struct bitmap_index *bitmap = NULL;
+	int use_bitmap = 0;
 	struct packfile_list_entry *e;
 	int pack_errors = 0, ret;
 
 	if (opts->prefix)
 		return packfile_store_for_each_prefixed_object(packed, opts, &data);
+
+	if (opts->filter &&
+	    opts->filter->choice != LOFC_DISABLED &&
+	    (bitmap = prepare_bitmap_git(source->odb->repo))) {
+		struct bitmapped_for_each_object_data data = {
+			.packed = packed,
+			.request = request,
+			.opts = opts,
+			.cb = cb,
+			.cb_data = cb_data,
+		};
+
+		if (!for_each_bitmapped_object(bitmap, opts->filter,
+					       bitmapped_for_each_object, &data))
+			use_bitmap = 1;
+	}
 
 	packed->skip_mru_updates = true;
 
@@ -329,6 +379,13 @@ static int odb_source_packed_for_each_object(struct odb_source *source,
 		struct packed_git *p = e->pack;
 
 		if (should_exclude_pack(p, opts->flags))
+			continue;
+
+		/*
+		 * Objects covered by the bitmap have already been yielded
+		 * above; skip them here to avoid duplicates.
+		 */
+		if (use_bitmap && bitmap_index_contains_pack(bitmap, p))
 			continue;
 
 		if (open_pack_index(p)) {
@@ -346,6 +403,7 @@ static int odb_source_packed_for_each_object(struct odb_source *source,
 
 out:
 	packed->skip_mru_updates = false;
+	free_bitmap_index(bitmap);
 
 	if (!ret && pack_errors)
 		ret = -1;
