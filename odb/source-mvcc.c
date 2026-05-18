@@ -614,7 +614,10 @@ static int odb_transaction_mvcc_write_pack(struct odb_transaction *base, int fd,
 	}
 	close(child.out);
 
-	if (finish_command(&child)) {
+	opts->index_pack_exit_status = finish_command(&child);
+	if (opts->index_pack_exit_status &&
+	    !(opts->check_self_contained_and_connected &&
+	      opts->index_pack_exit_status == 1)) {
 		opts->error_msg = "index-pack abnormal exit";
 		ret = -1;
 		goto out;
