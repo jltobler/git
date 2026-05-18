@@ -2299,7 +2299,8 @@ static const char *unpack_with_sideband(struct shallow_info *si,
 		.fsck_msg_types = fsck_msg_types.buf,
 		.max_pack_size = max_input_size,
 		.unpack_limit = unpack_limit,
-		.reject_thin = reject_thin,
+		.use_thin_pack = !reject_thin,
+		.pack_keep_msg = "receive-pack",
 		.quiet = quiet,
 	};
 	struct async muxer;

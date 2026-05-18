@@ -1729,21 +1729,34 @@ static int odb_transaction_files_write_pack(struct odb_transaction *base,
 		strvec_pushl(&child.args, "index-pack", "--stdin", NULL);
 		push_header_arg(&child.args, &hdr);
 
-		if (xgethostname(hostname, sizeof(hostname)))
-			xsnprintf(hostname, sizeof(hostname), "localhost");
-		strvec_pushf(&child.args,
-			     "--keep=receive-pack %" PRIuMAX " on %s",
-			     (uintmax_t)getpid(),
-			     hostname);
+		if (opts->pack_keep_msg) {
+			if (xgethostname(hostname, sizeof(hostname)))
+				xsnprintf(hostname, sizeof(hostname), "localhost");
+			strvec_pushf(&child.args,
+				     "--keep=%s %" PRIuMAX " on %s",
+				     opts->pack_keep_msg,
+				     (uintmax_t)getpid(),
+				     hostname);
+		}
 
+		if (opts->verbose)
+			strvec_push(&child.args, "-v");
+		if (opts->from_promisor)
+			strvec_push(&child.args, "--promisor");
+		if (opts->check_self_contained_and_connected)
+			strvec_push(&child.args, "--check-self-contained-and-connected");
 		if (!opts->quiet && err_fd)
 			strvec_push(&child.args, "--show-resolving-progress");
 		if (err_fd)
 			strvec_push(&child.args, "--report-end-of-input");
-		if (opts->fsck_objects)
-			strvec_pushf(&child.args, "--strict%s",
-				     opts->fsck_msg_types);
-		if (!opts->reject_thin)
+		if (opts->fsck_objects) {
+			if (opts->fsck_objects_only)
+				strvec_push(&child.args, "--fsck-objects");
+			else
+				strvec_pushf(&child.args, "--strict%s",
+					     opts->fsck_msg_types);
+		}
+		if (opts->use_thin_pack)
 			strvec_push(&child.args, "--fix-thin");
 		if (opts->max_pack_size)
 			strvec_pushf(&child.args, "--max-input-size=%" PRIuMAX,

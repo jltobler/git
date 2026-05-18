@@ -12,12 +12,38 @@ struct odb_transaction_write_pack_opts {
 	const char *fsck_msg_types;
 	const char *shallow_file;
 	const char *error_msg;
+
+	/*
+	 * When non-NULL, the backend emits
+	 *   --keep=<pack_keep_msg> <pid> on <host>
+	 * to index-pack, which causes a .keep file with that contents to be
+	 * written alongside the resulting pack. Leave NULL to skip --keep.
+	 */
+	const char *pack_keep_msg;
+
 	unsigned unpack_limit;
 	off_t max_pack_size;
 	int fsck_objects;
-	int reject_thin;
 	int err_fd;
 	int quiet;
+
+	/* Pass --fix-thin to index-pack. */
+	unsigned use_thin_pack : 1;
+
+	/* Pass -v to index-pack (resolve-deltas progress on stderr). */
+	unsigned verbose : 1;
+
+	/* Pass --promisor to index-pack. */
+	unsigned from_promisor : 1;
+
+	/* Pass --check-self-contained-and-connected to index-pack. */
+	unsigned check_self_contained_and_connected : 1;
+
+	/*
+	 * When set together with fsck_objects, pass --fsck-objects to
+	 * index-pack (object-only fsck) instead of --strict<fsck_msg_types>.
+	 */
+	unsigned fsck_objects_only : 1;
 
 	/*
 	 * To prevent races with concurrent repacks, the "files" backend creates
