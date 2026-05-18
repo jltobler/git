@@ -1218,10 +1218,8 @@ int cmd_grep(int argc,
 			struct odb_source *source;
 
 			odb_prepare_alternates(the_repository->objects);
-			for (source = the_repository->objects->sources; source; source = source->next) {
-				struct odb_source_files *files = odb_source_files_downcast(source);
-				odb_source_packed_prepare(files->packed);
-			}
+			for (source = the_repository->objects->sources; source; source = source->next)
+				odb_source_prepare(source, 0);
 		}
 
 		start_threads(&opt);

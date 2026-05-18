@@ -1130,7 +1130,7 @@ void odb_reprepare(struct object_database *o)
 	odb_prepare_alternates(o);
 
 	for (source = o->sources; source; source = source->next)
-		odb_source_reprepare(source);
+		odb_source_prepare(source, ODB_PREPARE_FLUSH_CACHES);
 
 	o->object_count_valid = 0;
 
