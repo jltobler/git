@@ -25,6 +25,8 @@
 #include "oidset.h"
 #include "packfile.h"
 #include "odb.h"
+#include "odb/transaction.h"
+#include "tempfile.h"
 #include "path.h"
 #include "connected.h"
 #include "fetch-negotiator.h"
@@ -900,7 +902,8 @@ static int get_pack(struct fetch_pack_args *args,
 		    int xd[2], struct string_list *pack_lockfiles,
 		    struct strvec *index_pack_args,
 		    struct ref **sought, int nr_sought,
-		    struct oidset *gitmodules_oids)
+		    struct oidset *gitmodules_oids,
+		    struct odb_transaction *transaction)
 {
 	struct async demux;
 	int do_keep = args->keep_pack;
@@ -927,6 +930,65 @@ static int get_pack(struct fetch_pack_args *args,
 	else
 		demux.out = xd[0];
 
+	fsck_objects = fetch_pack_fsck_objects();
+
+	/*
+	 * When the caller is not capturing index-pack args for packfile-URI
+	 * replay, ingest the inline pack through the ODB transaction. The
+	 * backend chooses between unpack-objects and index-pack based on the
+	 * pack header and opts->unpack_limit.
+	 */
+	if (transaction && !index_pack_args) {
+		struct odb_transaction_write_pack_opts opts = {
+			.fsck_msg_types = fsck_msg_types.buf,
+			.shallow_file = alternate_shallow_file,
+			.pack_keep_msg = (args->lock_pack || unpack_limit)
+					 ? "fetch-pack" : NULL,
+			.unpack_limit = (args->keep_pack ||
+					 args->from_promisor ||
+					 fsck_objects) ? 0 : unpack_limit,
+			.fsck_objects = fsck_objects,
+			.fsck_objects_only = args->from_promisor,
+			.from_promisor = args->from_promisor,
+			.check_self_contained_and_connected =
+				args->check_self_contained_and_connected,
+			.use_thin_pack = args->use_thin_pack,
+			.verbose = !args->quiet && !args->no_progress,
+			.quiet = args->quiet || args->no_progress,
+			.gitmodules_oids = gitmodules_oids,
+			.skip_quarantine = 1,
+		};
+
+		sigchain_push(SIGPIPE, SIG_IGN);
+		ret = odb_transaction_write_pack(transaction, demux.out, &opts);
+		sigchain_pop(SIGPIPE);
+
+		if (ret)
+			die(_("fetch-pack: %s"),
+			    opts.error_msg ? opts.error_msg
+					   : "index-pack failed");
+
+		if (opts.pack_lockfile && pack_lockfiles)
+			string_list_append(pack_lockfiles,
+					   get_tempfile_path(opts.pack_lockfile));
+
+		if (args->check_self_contained_and_connected)
+			args->self_contained_and_connected =
+				(opts.index_pack_exit_status == 0);
+
+		if (!use_sideband)
+			xd[0] = -1;
+		if (use_sideband && finish_async(&demux))
+			die(_("error in sideband demultiplexer"));
+
+		if (opts.pack_lockfile && pack_lockfiles &&
+		    pack_lockfiles->nr && args->from_promisor)
+			create_promisor_file(get_tempfile_path(opts.pack_lockfile),
+					     sought, nr_sought);
+
+		return 0;
+	}
+
 	if (!args->keep_pack && unpack_limit && !index_pack_args) {
 
 		if (read_pack_header(demux.out, &header))
@@ -942,8 +1004,6 @@ static int get_pack(struct fetch_pack_args *args,
 		strvec_push(&cmd.args, "--shallow-file");
 		strvec_push(&cmd.args, alternate_shallow_file);
 	}
-
-	fsck_objects = fetch_pack_fsck_objects();
 
 	if (do_keep || args->from_promisor || index_pack_args || fsck_objects) {
 		if (pack_lockfiles || fsck_objects)
@@ -1083,6 +1143,7 @@ static struct ref *do_fetch_pack(struct fetch_pack_args *args,
 	size_t agent_len;
 	struct fetch_negotiator negotiator_alloc;
 	struct fetch_negotiator *negotiator;
+	struct odb_transaction *transaction = NULL;
 
 	negotiator = &negotiator_alloc;
 	if (args->refetch) {
@@ -1206,11 +1267,15 @@ static struct ref *do_fetch_pack(struct fetch_pack_args *args,
 		alternate_shallow_file = NULL;
 
 	fsck_options_init(&fsck_options, the_repository, FSCK_OPTIONS_MISSING_GITMODULES);
+
+	odb_transaction_begin_or_die(r->objects, &transaction, 0);
 	if (get_pack(args, fd, pack_lockfiles, NULL, sought, nr_sought,
-		     &fsck_options.gitmodules_found))
+		     &fsck_options.gitmodules_found, transaction))
 		die(_("git fetch-pack: fetch failed."));
 	if (fsck_finish(&fsck_options))
 		die("fsck failed");
+	if (odb_transaction_commit(transaction))
+		die(_("git fetch-pack: failed to commit ODB transaction"));
 
  all_done:
 	fsck_options_clear(&fsck_options);
@@ -1650,6 +1715,7 @@ static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
 	int i;
 	struct strvec index_pack_args = STRVEC_INIT;
 	const char *promisor_remote_config;
+	struct odb_transaction *transaction = NULL;
 
 	fsck_options_init(&fsck_options, the_repository, FSCK_OPTIONS_MISSING_GITMODULES);
 
@@ -1792,9 +1858,21 @@ static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
 			close(fd[1]);
 			fd[1] = -1;
 
+			/*
+			 * Use an ODB transaction for the inline pack only when
+			 * no packfile-URIs follow; the URI loop below still
+			 * spawns http-fetch/index-pack inline against the
+			 * real object store.
+			 */
+			if (!packfile_uris.nr)
+				odb_transaction_begin_or_die(r->objects,
+							     &transaction, 0);
+
 			if (get_pack(args, fd, pack_lockfiles,
 				     packfile_uris.nr ? &index_pack_args : NULL,
-				     sought, nr_sought, &fsck_options.gitmodules_found))
+				     sought, nr_sought,
+				     &fsck_options.gitmodules_found,
+				     transaction))
 				die(_("git fetch-pack: fetch failed."));
 			do_check_stateless_delimiter(args->stateless_rpc, &reader);
 
@@ -1861,6 +1939,9 @@ static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
 
 	if (fsck_finish(&fsck_options))
 		die("fsck failed");
+
+	if (transaction && odb_transaction_commit(transaction))
+		die(_("git fetch-pack: failed to commit ODB transaction"));
 
 	if (negotiator)
 		negotiator->release(negotiator);
