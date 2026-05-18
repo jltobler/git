@@ -107,6 +107,15 @@ void fixup_pack_header_footer(const struct git_hash_algo *, int,
 			      unsigned char *, off_t);
 char *index_pack_lockfile(struct repository *r, int fd, int *is_well_formed);
 
+/*
+ * Read newline-terminated hex object IDs from "fd" (as emitted by
+ * index-pack after its leading "keep\t<hash>\n"/"pack\t<hash>\n" line)
+ * into "gitmodules_oids", until EOF.  Dies on malformed input.
+ */
+struct oidset;
+void parse_gitmodules_oids(struct repository *r, int fd,
+			   struct oidset *gitmodules_oids);
+
 struct ref;
 
 void write_promisor_file(const char *promisor_name, struct ref **sought, int nr_sought);

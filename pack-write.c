@@ -2,6 +2,7 @@
 #include "environment.h"
 #include "gettext.h"
 #include "hex.h"
+#include "oidset.h"
 #include "pack.h"
 #include "csum-file.h"
 #include "remote.h"
@@ -495,6 +496,28 @@ char *index_pack_lockfile(struct repository *r, int ip_out, int *is_well_formed)
 	if (is_well_formed)
 		*is_well_formed = 0;
 	return NULL;
+}
+
+void parse_gitmodules_oids(struct repository *r, int fd,
+			   struct oidset *gitmodules_oids)
+{
+	int len = r->hash_algo->hexsz + 1; /* hash + NL */
+
+	do {
+		char hex_hash[GIT_MAX_HEXSZ + 1];
+		int read_len = read_in_full(fd, hex_hash, len);
+		struct object_id oid;
+		const char *end;
+
+		if (!read_len)
+			return;
+		if (read_len != len)
+			die("invalid length read %d", read_len);
+		if (parse_oid_hex_algop(hex_hash, &oid, &end, r->hash_algo) ||
+		    *end != '\n')
+			die("invalid hash");
+		oidset_insert(gitmodules_oids, &oid);
+	} while (1);
 }
 
 /*

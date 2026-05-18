@@ -881,26 +881,6 @@ static void create_promisor_file(const char *keep_name,
 	strbuf_release(&promisor_name);
 }
 
-static void parse_gitmodules_oids(int fd, struct oidset *gitmodules_oids)
-{
-	int len = the_hash_algo->hexsz + 1; /* hash + NL */
-
-	do {
-		char hex_hash[GIT_MAX_HEXSZ + 1];
-		int read_len = read_in_full(fd, hex_hash, len);
-		struct object_id oid;
-		const char *end;
-
-		if (!read_len)
-			return;
-		if (read_len != len)
-			die("invalid length read %d", read_len);
-		if (parse_oid_hex(hex_hash, &oid, &end) || *end != '\n')
-			die("invalid hash");
-		oidset_insert(gitmodules_oids, &oid);
-	} while (1);
-}
-
 static void add_index_pack_keep_option(struct strvec *args)
 {
 	char hostname[HOST_NAME_MAX + 1];
@@ -1044,7 +1024,7 @@ static int get_pack(struct fetch_pack_args *args,
 			string_list_append_nodup(pack_lockfiles, pack_lockfile);
 		else
 			free(pack_lockfile);
-		parse_gitmodules_oids(cmd.out, gitmodules_oids);
+		parse_gitmodules_oids(the_repository, cmd.out, gitmodules_oids);
 		close(cmd.out);
 	}
 
@@ -1857,7 +1837,8 @@ static struct ref *do_fetch_pack_v2(struct fetch_pack_args *args,
 
 		packname[the_hash_algo->hexsz] = '\0';
 
-		parse_gitmodules_oids(cmd.out, &fsck_options.gitmodules_found);
+		parse_gitmodules_oids(the_repository, cmd.out,
+				      &fsck_options.gitmodules_found);
 
 		close(cmd.out);
 
