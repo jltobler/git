@@ -14,7 +14,7 @@
 #include "trace2.h"
 
 static const char http_fetch_usage[] = "git http-fetch "
-"[-c] [-t] [-a] [-v] [--recover] [-w ref] [--stdin | --packfile=hash | commit-id] url";
+"[-c] [-t] [-a] [-v] [--recover] [-w ref] [--stdin | --packfile=hash [--stdout] | commit-id] url";
 
 static int fetch_using_walker(const char *raw_url, int get_verbosely,
 			      int get_recover, int commits, char **commit_id,
@@ -54,7 +54,8 @@ static int fetch_using_walker(const char *raw_url, int get_verbosely,
 
 static void fetch_single_packfile(struct object_id *packfile_hash,
 				  const char *url,
-				  const char **index_pack_args) {
+				  const char **index_pack_args,
+				  int output_to_stdout) {
 	struct http_pack_request *preq;
 	struct slot_results results;
 	int ret;
@@ -65,8 +66,12 @@ static void fetch_single_packfile(struct object_id *packfile_hash,
 	if (!preq)
 		die("couldn't create http pack request");
 	preq->slot->results = &results;
-	preq->index_pack_args = index_pack_args;
-	preq->preserve_index_pack_stdout = 1;
+	if (output_to_stdout) {
+		preq->output_to_stdout = 1;
+	} else {
+		preq->index_pack_args = index_pack_args;
+		preq->preserve_index_pack_stdout = 1;
+	}
 
 	if (start_active_slot(preq->slot)) {
 		run_active_slot(preq->slot);
@@ -104,6 +109,7 @@ int cmd_main(int argc, const char **argv)
 	int get_verbosely = 0;
 	int get_recover = 0;
 	int packfile = 0;
+	int output_to_stdout = 0;
 	int nongit;
 	struct object_id packfile_hash;
 	struct strvec index_pack_args = STRVEC_INIT;
@@ -140,6 +146,8 @@ int cmd_main(int argc, const char **argv)
 				die(_("argument to --packfile must be a valid hash (got '%s')"), p);
 		} else if (skip_prefix(argv[arg], "--index-pack-arg=", &p)) {
 			strvec_push(&index_pack_args, p);
+		} else if (!strcmp(argv[arg], "--stdout")) {
+			output_to_stdout = 1;
 		}
 		arg++;
 	}
@@ -154,17 +162,23 @@ int cmd_main(int argc, const char **argv)
 	repo_config(the_repository, git_default_config, NULL);
 
 	if (packfile) {
-		if (!index_pack_args.nr)
-			die(_("the option '%s' requires '%s'"), "--packfile", "--index-pack-args");
+		if (output_to_stdout && index_pack_args.nr)
+			die(_("options '%s' and '%s' cannot be used together"),
+			    "--stdout", "--index-pack-args");
+		if (!output_to_stdout && !index_pack_args.nr)
+			die(_("the option '%s' requires '%s' or '%s'"),
+			    "--packfile", "--index-pack-args", "--stdout");
 
 		fetch_single_packfile(&packfile_hash, argv[arg],
-				      index_pack_args.v);
+				      index_pack_args.v, output_to_stdout);
 		ret = 0;
 		goto out;
 	}
 
 	if (index_pack_args.nr)
 		die(_("the option '%s' requires '%s'"), "--index-pack-args", "--packfile");
+	if (output_to_stdout)
+		die(_("the option '%s' requires '%s'"), "--stdout", "--packfile");
 
 	if (commits_on_stdin) {
 		commits = walker_targets_stdin(&commit_id, &write_ref);

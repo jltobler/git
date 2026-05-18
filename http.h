@@ -212,9 +212,18 @@ struct http_pack_request {
 	 * index-pack command to run. Must be terminated by NULL.
 	 *
 	 * If NULL, defaults to	{"index-pack", "--stdin", NULL}.
+	 *
+	 * Ignored when output_to_stdout is set.
 	 */
 	const char **index_pack_args;
 	unsigned preserve_index_pack_stdout : 1;
+
+	/*
+	 * If set, the downloaded packfile bytes are written to stdout instead
+	 * of being handed to index-pack. Callers that set this typically pipe
+	 * the bytes into their own index-pack invocation.
+	 */
+	unsigned output_to_stdout : 1;
 
 	FILE *packfile;
 	struct strbuf tmpfile;

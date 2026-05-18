@@ -3,6 +3,7 @@
 
 #include "git-compat-util.h"
 #include "git-curl-compat.h"
+#include "copy.h"
 #include "environment.h"
 #include "hex.h"
 #include "http.h"
@@ -2619,6 +2620,12 @@ int finish_http_pack_request(struct http_pack_request *preq)
 	preq->packfile = NULL;
 
 	tmpfile_fd = xopen(preq->tmpfile.buf, O_RDONLY);
+
+	if (preq->output_to_stdout) {
+		if (copy_fd(tmpfile_fd, 1))
+			ret = -1;
+		goto cleanup;
+	}
 
 	ip.git_cmd = 1;
 	ip.in = tmpfile_fd;

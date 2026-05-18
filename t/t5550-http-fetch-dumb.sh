@@ -308,6 +308,32 @@ test_expect_success 'fetch notices corrupt pack' '
 	)
 '
 
+test_expect_success 'http-fetch --packfile --stdout writes raw pack to stdout' '
+	rm -rf packfileclient &&
+	ARBITRARY=$(git -C "$HTTPD_DOCUMENT_ROOT_PATH"/repo_pack.git rev-parse HEAD) &&
+	git init packfileclient &&
+	p=$(cd "$HTTPD_DOCUMENT_ROOT_PATH"/repo_pack.git && ls objects/pack/pack-*.pack) &&
+
+	git -C packfileclient http-fetch --packfile=$ARBITRARY --stdout \
+		"$HTTPD_URL"/dumb/repo_pack.git/$p >pack.raw &&
+
+	# The bytes written to stdout must match the upstream pack byte-for-byte.
+	test_cmp "$HTTPD_DOCUMENT_ROOT_PATH/repo_pack.git/$p" pack.raw &&
+
+	# And piping that pack into index-pack should produce a valid index.
+	git -C packfileclient index-pack --stdin <pack.raw
+'
+
+test_expect_success 'http-fetch --stdout rejects --index-pack-arg' '
+	ARBITRARY=$(git -C "$HTTPD_DOCUMENT_ROOT_PATH"/repo_pack.git rev-parse HEAD) &&
+	p=$(cd "$HTTPD_DOCUMENT_ROOT_PATH"/repo_pack.git && ls objects/pack/pack-*.pack) &&
+	test_must_fail git -C packfileclient http-fetch \
+		--packfile=$ARBITRARY --stdout \
+		--index-pack-arg=index-pack --index-pack-arg=--stdin \
+		"$HTTPD_URL"/dumb/repo_pack.git/$p 2>err &&
+	test_grep "cannot be used together" err
+'
+
 test_expect_success 'http-fetch --packfile with corrupt pack' '
 	rm -rf packfileclient &&
 	git init packfileclient &&

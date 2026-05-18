@@ -9,7 +9,7 @@ git-http-fetch - Download from a remote Git repository via HTTP
 SYNOPSIS
 --------
 [verse]
-'git http-fetch' [-c] [-t] [-a] [-d] [-v] [-w <filename>] [--recover] [--stdin | --packfile=<hash> | <commit>] <URL>
+'git http-fetch' [-c] [-t] [-a] [-d] [-v] [-w <filename>] [--recover] [--stdin | --packfile=<hash> [--stdout] | <commit>] <URL>
 
 DESCRIPTION
 -----------
@@ -50,11 +50,17 @@ commit-id::
 	URL and uses index-pack to generate corresponding .idx and .keep files.
 	The hash is used to determine the name of the temporary file and is
 	arbitrary. The output of index-pack is printed to stdout. Requires
-	--index-pack-args.
+	--index-pack-args, unless --stdout is used.
 
 --index-pack-args=<args>::
 	For internal use only. The command to run on the contents of the
 	downloaded pack. Arguments are URL-encoded separated by spaces.
+
+--stdout::
+	For internal use only. When used with --packfile, write the
+	downloaded packfile bytes to standard output instead of invoking
+	index-pack on them. The caller is then responsible for indexing
+	the pack. Cannot be combined with --index-pack-args.
 
 --recover::
 	Verify that everything reachable from target is fetched.  Used after
