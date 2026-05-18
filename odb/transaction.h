@@ -5,6 +5,8 @@
 #include "gettext.h"
 #include "odb.h"
 
+struct oidset;
+
 /*
  * Options for `odb_transaction_write_pack()`.
  */
@@ -52,6 +54,16 @@ struct odb_transaction_write_pack_opts {
 	 * updated.
 	 */
 	struct tempfile *pack_lockfile;
+
+	/*
+	 * When non-NULL and the index-pack branch is taken with fsck enabled,
+	 * the backend reads the trailing list of newline-terminated hex
+	 * object IDs that index-pack emits after the lockfile line, and
+	 * inserts each into this oidset. Used by fetch callers to learn the
+	 * .gitmodules blob OIDs in an incoming pack so that they can be
+	 * carried through a second fsck pass.
+	 */
+	struct oidset *gitmodules_oids;
 };
 
 /*

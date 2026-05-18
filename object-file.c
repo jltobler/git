@@ -1776,6 +1776,9 @@ static int odb_transaction_files_write_pack(struct odb_transaction *base,
 			opts->pack_lockfile = register_tempfile(lockfile);
 			free(lockfile);
 		}
+		if (opts->gitmodules_oids)
+			parse_gitmodules_oids(the_repository, child.out,
+					      opts->gitmodules_oids);
 		close(child.out);
 
 		status = finish_command(&child);
