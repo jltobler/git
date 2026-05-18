@@ -1114,7 +1114,7 @@ void odb_free(struct object_database *o)
 	free(o);
 }
 
-void odb_reprepare(struct object_database *o)
+void odb_prepare(struct object_database *o, enum odb_prepare_flags flags)
 {
 	struct odb_source *source;
 
@@ -1126,15 +1126,21 @@ void odb_reprepare(struct object_database *o)
 	 * the linked list, so existing odbs will continue to exist for
 	 * the lifetime of the process.
 	 */
-	o->loaded_alternates = 0;
+	if (flags & ODB_PREPARE_FLUSH_CACHES) {
+		o->loaded_alternates = 0;
+		o->object_count_valid = 0;
+	}
+
 	odb_prepare_alternates(o);
-
 	for (source = o->sources; source; source = source->next)
-		odb_source_prepare(source, ODB_PREPARE_FLUSH_CACHES);
-
-	o->object_count_valid = 0;
+		odb_source_prepare(source, flags);
 
 	obj_read_unlock();
+}
+
+void odb_reprepare(struct object_database *o)
+{
+	odb_prepare(o, ODB_PREPARE_FLUSH_CACHES);
 }
 
 int odb_fsck(struct object_database *odb, struct odb_fsck_options *options)
