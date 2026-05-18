@@ -590,7 +590,7 @@ static int odb_transaction_mvcc_write_pack(struct odb_transaction *base, int fd,
 
 	if (opts->fsck_objects)
 		strvec_pushf(&child.args, "--strict%s", opts->fsck_msg_types ? opts->fsck_msg_types : "");
-	if (!opts->reject_thin)
+	if (!opts->use_thin_pack)
 		strvec_push(&child.args, "--fix-thin");
 	if (opts->max_pack_size)
 		strvec_pushf(&child.args, "--max-input-size=%"PRIuMAX, (uintmax_t)opts->max_pack_size);
