@@ -1214,15 +1214,8 @@ int cmd_grep(int argc,
 		if (recurse_submodules)
 			repo_read_gitmodules(the_repository, 1);
 
-		if (startup_info->have_repository) {
-			struct odb_source *source;
-
-			odb_prepare_alternates(the_repository->objects);
-			for (source = the_repository->objects->sources; source; source = source->next) {
-				struct odb_source_files *files = odb_source_files_downcast(source);
-				odb_source_packed_prepare(files->packed);
-			}
-		}
+		if (startup_info->have_repository)
+			odb_prepare(the_repository->objects, 0);
 
 		start_threads(&opt);
 	} else {

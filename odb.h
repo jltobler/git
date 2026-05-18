@@ -161,10 +161,22 @@ bool odb_optimize_required(struct object_database *odb,
  */
 void odb_close(struct object_database *o);
 
+enum odb_prepare_flags {
+	/*
+	 * Flush caches, reload alternates and then re-prepare each object
+	 * source so that new objects may become accessible.
+	 */
+	ODB_PREPARE_FLUSH_CACHES = (1 << 0),
+};
+
 /*
- * Clear caches, reload alternates and then reload object sources so that new
- * objects may become accessible.
+ * Prepare the object database for use. Calling this function is generally not
+ * needed, but can be useful in case the caller wants to pre-open individual
+ * sources.
  */
+void odb_prepare(struct object_database *o, enum odb_prepare_flags flags);
+
+/* Equivalent to `odb_prepare(o, ODB_PREPARE_FLUSH_CACHES)`. */
 void odb_reprepare(struct object_database *o);
 
 enum odb_fsck_flags {
