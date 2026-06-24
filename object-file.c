@@ -27,6 +27,7 @@
 #include "path.h"
 #include "read-cache-ll.h"
 #include "setup.h"
+#include "strvec.h"
 #include "tempfile.h"
 #include "tmp-objdir.h"
 
@@ -1687,6 +1688,20 @@ static int odb_transaction_files_commit(struct odb_transaction *base)
 	return 0;
 }
 
+static int odb_transaction_files_env(struct odb_transaction *base,
+				     struct strvec *env)
+{
+	struct odb_transaction_files *transaction =
+		container_of(base, struct odb_transaction_files, base);
+	int ret;
+
+	ret = odb_transaction_files_prepare(&transaction->base);
+	if (!ret)
+		strvec_pushv(env, tmp_objdir_env(transaction->objdir));
+
+	return ret;
+}
+
 int odb_transaction_files_begin(struct odb_source *source,
 				struct odb_transaction **out)
 {
@@ -1696,6 +1711,7 @@ int odb_transaction_files_begin(struct odb_source *source,
 	transaction->base.source = source;
 	transaction->base.commit = odb_transaction_files_commit;
 	transaction->base.write_object_stream = odb_transaction_files_write_object_stream;
+	transaction->base.env = odb_transaction_files_env;
 	*out = &transaction->base;
 
 	return 0;
