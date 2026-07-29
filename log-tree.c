@@ -1037,16 +1037,13 @@ static int do_remerge_diff(struct rev_info *opt,
 	struct commit *parent2 = parents->next->item;
 	struct strbuf parent1_desc = STRBUF_INIT;
 	struct strbuf parent2_desc = STRBUF_INIT;
+	struct tmp_objdir *temp = NULL;
 
-	/*
-	 * Lazily prepare a temporary object directory and rotate it
-	 * into the alternative object store list as the primary.
-	 */
-	if (opt->remerge_diff && !opt->remerge_objdir) {
-		opt->remerge_objdir = tmp_objdir_create(the_repository, "remerge-diff");
-		if (!opt->remerge_objdir)
+	if (opt->remerge_diff) {
+		temp = tmp_objdir_create(the_repository, "remerge-diff");
+		if (!temp)
 			return error(_("unable to create temporary object directory"));
-		tmp_objdir_replace_primary_odb(opt->remerge_objdir, 1);
+		tmp_objdir_replace_primary_odb(temp, 1);
 	}
 
 	/* Setup merge options */
@@ -1084,8 +1081,8 @@ static int do_remerge_diff(struct rev_info *opt,
 	strbuf_release(&parent2_desc);
 	merge_finalize(&o, &res);
 
-	/* Clean up the contents of the temporary object directory */
-	tmp_objdir_discard_objects(opt->remerge_objdir);
+	if (opt->remerge_diff)
+		tmp_objdir_destroy(temp);
 
 	return !opt->loginfo;
 }

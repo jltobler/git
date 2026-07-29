@@ -7539,11 +7539,6 @@ int diff_result_code(struct rev_info *revs)
 	struct diff_options *opt = &revs->diffopt;
 	int result = 0;
 
-	if (revs->remerge_diff) {
-		tmp_objdir_destroy(revs->remerge_objdir);
-		revs->remerge_objdir = NULL;
-	}
-
 	diff_warn_rename_limit("diff.renameLimit",
 			       opt->needed_rename_limit,
 			       opt->degraded_cc_to_c);
