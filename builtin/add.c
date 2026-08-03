@@ -610,5 +610,6 @@ finish:
 	free(ps_matched);
 	dir_clear(&dir);
 	clear_pathspec(&pathspec);
+	odb_transaction_release(transaction);
 	return exit_status;
 }

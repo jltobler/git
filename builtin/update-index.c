@@ -1157,6 +1157,7 @@ int cmd_update_index(int argc,
 			 */
 			if (transaction && verbose) {
 				odb_transaction_commit(transaction);
+				odb_transaction_release(transaction);
 				transaction = NULL;
 			}
 
@@ -1225,6 +1226,7 @@ int cmd_update_index(int argc,
 	 * By now we have added all of the new objects
 	 */
 	odb_transaction_commit(transaction);
+	odb_transaction_release(transaction);
 
 	if (split_index > 0) {
 		if (repo_config_get_split_index(the_repository) == 0)

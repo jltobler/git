@@ -604,6 +604,7 @@ static void unpack_all(void)
 		display_progress(progress, i + 1);
 	}
 	odb_transaction_commit(transaction);
+	odb_transaction_release(transaction);
 	stop_progress(&progress);
 
 	if (delta_list)

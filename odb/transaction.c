@@ -21,8 +21,6 @@ int odb_transaction_begin(struct object_database *odb,
 
 int odb_transaction_commit(struct odb_transaction *transaction)
 {
-	int ret;
-
 	if (!transaction)
 		return 0;
 
@@ -31,11 +29,21 @@ int odb_transaction_commit(struct odb_transaction *transaction)
 	 */
 	ASSERT(transaction == transaction->source->odb->transaction);
 
-	ret = transaction->commit(transaction);
+	return transaction->commit(transaction);
+}
+
+void odb_transaction_release(struct odb_transaction *transaction)
+{
+	if (!transaction)
+		return;
+
+	ASSERT(transaction == transaction->source->odb->transaction);
+
+	if (transaction->release)
+		transaction->release(transaction);
+
 	transaction->source->odb->transaction = NULL;
 	free(transaction);
-
-	return ret;
 }
 
 int odb_transaction_write_object_stream(struct odb_transaction *transaction,
