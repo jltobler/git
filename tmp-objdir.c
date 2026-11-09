@@ -148,10 +148,13 @@ static int setup_tmp_objdir(const char *root)
 {
 	char *path;
 	int ret = 0;
+	int saved_errno;
 
 	path = xstrfmt("%s/pack", root);
 	ret = mkdir(path, 0777);
+	saved_errno = errno;
 	free(path);
+	errno = saved_errno;
 
 	return ret;
 }
@@ -163,6 +166,7 @@ struct tmp_objdir *tmp_objdir_create(struct repository *r,
 	struct odb_source_files *files = odb_source_files_downcast(r->objects->source);
 	static int installed_handlers;
 	struct tmp_objdir *t;
+	int saved_errno;
 
 	if (the_tmp_objdir)
 		BUG("only one tmp_objdir can be used at a time");
@@ -185,8 +189,10 @@ struct tmp_objdir *tmp_objdir_create(struct repository *r,
 		chdir_notify_register(tmp_objdir_reparent, t);
 
 	if (!mkdtemp(t->path.buf)) {
+		saved_errno = errno;
 		/* free, not destroy, as we never touched the filesystem */
 		tmp_objdir_free(t);
+		errno = saved_errno;
 		return NULL;
 	}
 
@@ -197,7 +203,9 @@ struct tmp_objdir *tmp_objdir_create(struct repository *r,
 	}
 
 	if (setup_tmp_objdir(t->path.buf)) {
+		saved_errno = errno;
 		tmp_objdir_destroy(t);
+		errno = saved_errno;
 		return NULL;
 	}
 
